@@ -1,0 +1,70 @@
+# Declarative RAG configuration.
+# Environment variables (see .env.example) override these values.
+
+gemini:
+  embedding_model: gemini-embedding-001
+  embedding_dim: 768
+  generation_model: gemini-2.5-flash
+  request_timeout_seconds: 30
+  embedding_batch_size: 100
+
+database:
+  host: localhost
+  port: 5432
+  name: ragdb
+  user: raguser
+  password: ragpass
+  pool_min: 2
+  pool_max: 10
+  statement_timeout_ms: 15000
+
+ingestion:
+  chunk_size: 800
+  chunk_overlap: 100
+  supported_extensions: [".pdf", ".docx", ".txt", ".md"]
+  max_file_mb: 50
+
+retrieval:
+  top_k: 5
+  ivfflat_lists: 100
+  ivfflat_probes: 10
+  hybrid_search: true
+  hybrid_vector_weight: 0.7
+  hybrid_bm25_weight: 0.3
+  enable_rerank: false
+  rerank_top_n: 20
+
+cache:
+  enabled: false
+  redis_url: redis://localhost:6379/0
+  ttl_seconds: 3600
+
+aml:
+  enabled: true
+  boost_keywords:
+    - sanction
+    - OFAC
+    - SDN
+    - PEP
+    - shell company
+    - layering
+    - structuring
+    - smurfing
+    - wire transfer
+    - beneficial owner
+  high_risk_jurisdictions:
+    - Iran
+    - North Korea
+    - Syria
+    - Cuba
+    - Russia
+  risk_weights:
+    vector: 0.6
+    bm25: 0.2
+    entity: 0.1
+    keyword: 0.1
+
+observability:
+  log_level: INFO
+  service_name: adk-rag-postgres
+  otlp_endpoint: null

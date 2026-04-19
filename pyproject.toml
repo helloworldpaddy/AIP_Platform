@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adk-rag-postgres"
+version = "0.1.0"
+description = "ADK-based RAG with PostgreSQL (pgvector) and Gemini"
+requires-python = ">=3.11"
+readme = "README.md"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires a running PostgreSQL with pgvector",
+]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["agents*"]

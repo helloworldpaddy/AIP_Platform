@@ -1,0 +1,82 @@
+# ---- Secrets & local config ----
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*_rsa
+*_ecdsa
+*_ed25519
+credentials.json
+*-credentials.json
+service-account*.json
+*.p12
+secrets/
+.secrets/
+
+# Optional local overrides (passwords, API keys) — keep templates in repo
+config.local.yaml
+*.local.yaml
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# ---- Test / type / lint caches ----
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ---- ADK / tooling ----
+.adk/
+
+# ---- IDE & OS ----
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Cursor / Claude local overrides (may contain paths or permissions)
+.claude/settings.local.json
+
+# ---- Logs & temp ----
+*.log
+logs/
+tmp/
+temp/
+.cache/
