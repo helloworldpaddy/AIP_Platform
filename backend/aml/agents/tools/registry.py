@@ -1,7 +1,9 @@
-"""Tool registry — maps a tool name to its async callable + JSON schema.
+"""Legacy tool registry — maps a tool name to its async callable + JSON schema.
 
-Used by `gemini_runner` to build the function declarations passed to
-`google.genai` and to dispatch model-emitted tool calls back to Python.
+Predates the ADK migration; kept because tests and a couple of utilities
+still introspect `ToolSpec` to discover available tools.  Production agents
+no longer route through it — they use the `ADK_TOOLS` map in `tools/__init__`
+which exposes the same callables as `google.adk.tools.FunctionTool` wrappers.
 """
 
 from __future__ import annotations

@@ -1,18 +1,21 @@
-"""Common base for LLM-driven agents.
+"""Common base for LLM-driven agents (Google ADK).
 
 Each concrete agent subclass declares:
     * `name`              — `AgentName` enum value
     * `instruction`       — system prompt (from `prompts.py`)
     * `tool_names`        — list of tool names this agent is allowed to call
+                            (resolved against `tools.ADK_TOOLS`)
     * `requires_review`   — class-level default (most stages = True)
     * `build_user_prompt(ctx)` — assemble the per-call user message
     * `next_gates(...)`   — optional override returning gates to open
 
-The base class handles:
-    * Setting the `AgentToolContext` for the duration of the LLM call
-    * Dispatching to `gemini_runner.run_agent_turn`
-    * Parsing the structured JSON output
-    * Wrapping everything in an `AgentResult`
+The base class:
+    * Constructs a long-lived `google.adk.agents.LlmAgent` once per process
+      (instruction + tools + model are static; only the user prompt varies).
+    * Sets the `AgentToolContext` for the duration of the LLM call.
+    * Dispatches to `adk_runner.run_adk_turn`.
+    * Parses the structured JSON output the agent emits.
+    * Wraps everything in an `AgentResult`.
 """
 
 from __future__ import annotations
@@ -23,14 +26,15 @@ from typing import Any
 from agents.rag_agent.config.settings import get_settings
 
 from ..models.enums import AgentName
+from .adk_runner import (
+    AdkTurnResult,
+    build_llm_agent,
+    extract_json_block,
+    run_adk_turn,
+)
 from .base import AgentContext, AgentResult, BaseAgent, GateSpec
 from .context import AgentToolContext, bind_tool_context
-from .gemini_runner import (
-    GeminiTurnResult,
-    extract_json_block,
-    run_agent_turn,
-)
-from .tools.registry import tools_named
+from .tools import adk_tools_named
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +48,16 @@ class LlmDrivenAgent(BaseAgent):
     def __init__(self, model: str | None = None) -> None:
         # If no override given, take the platform-wide default from settings.
         self.model_name = model or get_settings().gemini.generation_model
+        # Build the ADK agent eagerly — its declarations / tool schema are
+        # static across cases; only the user prompt and per-call context
+        # change between invocations.
+        self._adk_agent = build_llm_agent(
+            name=self.name.value.lower(),
+            instruction=self.instruction,
+            model=self.model_name,
+            tools=adk_tools_named(self.tool_names),
+            temperature=self.temperature,
+        )
 
     # ----- to be implemented by subclasses ------------------------------------
     def build_user_prompt(self, ctx: AgentContext) -> str:  # pragma: no cover
@@ -55,14 +69,13 @@ class LlmDrivenAgent(BaseAgent):
         return []
 
     def reasoning_summary(
-        self, output: dict[str, Any], turn: GeminiTurnResult
+        self, output: dict[str, Any], turn: AdkTurnResult
     ) -> str | None:
-        # Sensible default — first 240 chars of the model's final text.
         text = turn.final_text.strip()
         return (text[:237] + "…") if len(text) > 240 else text
 
     def collect_recorded_ids(
-        self, turn: GeminiTurnResult
+        self, turn: AdkTurnResult
     ) -> tuple[list[str], list[str]]:
         """Walk tool calls to harvest evidence_id / party_id values."""
         evidence: list[str] = []
@@ -78,7 +91,6 @@ class LlmDrivenAgent(BaseAgent):
     # ----- main entry point used by the orchestrator -------------------------
     async def run(self, ctx: AgentContext) -> AgentResult:
         prompt = self.build_user_prompt(ctx)
-        tools = tools_named(self.tool_names)
 
         tool_ctx = AgentToolContext(
             case_id=ctx.state.case.id,
@@ -87,12 +99,9 @@ class LlmDrivenAgent(BaseAgent):
             repos=ctx.repos,
         )
         with bind_tool_context(tool_ctx):
-            turn = await run_agent_turn(
-                system_instruction=self.instruction,
+            turn = await run_adk_turn(
+                adk_agent=self._adk_agent,
                 user_prompt=prompt,
-                tools=tools,
-                model=self.model_name,
-                temperature=self.temperature,
             )
 
         try:

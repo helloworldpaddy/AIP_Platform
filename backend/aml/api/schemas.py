@@ -69,3 +69,36 @@ class AuditChainStatus(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     db: str
+
+
+# -- Graph viz ----------------------------------------------------------------
+
+
+class GraphNode(BaseModel):
+    """One vertex on the case graph (a party, an account, or the case itself)."""
+
+    id: str  # unique within the response, e.g. "party:<external_id>"
+    label: str
+    kind: str  # "subject" | "party" | "account" | "transaction"
+    party_type: str | None = None
+    hop_distance: int | None = None
+    verified: bool | None = None
+    risk_indicators: dict[str, Any] = Field(default_factory=dict)
+
+
+class GraphLink(BaseModel):
+    """One directed edge between two graph nodes."""
+
+    source: str
+    target: str
+    relationship: str  # e.g. "wire_to", "owns", "controls"
+    weight: float = 1.0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CaseGraphResponse(BaseModel):
+    case_id: str
+    subject_party_id: str
+    nodes: list[GraphNode]
+    links: list[GraphLink]
+    source: str  # "case_parties" | "neo4j" | "hybrid" — provenance for the UI

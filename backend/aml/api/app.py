@@ -13,13 +13,16 @@ from typing import AsyncIterator
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from ..agents.tools.data_tools import set_graph_provider
 from ..db.client import AmlDbClient
+from ..integrations.neo4j_provider import build_neo4j_provider_if_configured
 from .dependencies import get_db
 from .errors import install_error_handlers
 from .routes.agents import case_agents_router, runs_router
 from .routes.audit import router as audit_router
 from .routes.cases import router as cases_router
 from .routes.gates import router as gates_router
+from .routes.graph import router as graph_router
 from .routes.narratives import router as narratives_router
 from .routes.parties import router as parties_router
 from .schemas import HealthResponse
@@ -32,10 +35,27 @@ def create_app(*, cors_origins: list[str] | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         db = get_db()
         await db.connect()
-        log.info("aml.api.startup ok")
+
+        # Optional: wire the Neo4j-backed GraphProvider if configured.  When
+        # `NEO4J_URI` is unset we leave the provider slot empty — the agent
+        # will surface a "Graph provider not configured" error if it tries
+        # to call `neo4j_hop_traversal`, which is the desired loud failure
+        # mode for an unwired deployment.
+        neo4j_provider = build_neo4j_provider_if_configured()
+        if neo4j_provider is not None:
+            try:
+                await neo4j_provider.connect()
+                set_graph_provider(neo4j_provider)
+            except Exception:  # noqa: BLE001 — log + degrade
+                log.exception("aml.api.neo4j.connect_failed")
+                neo4j_provider = None
+
+        log.info("aml.api.startup ok neo4j=%s", neo4j_provider is not None)
         try:
             yield
         finally:
+            if neo4j_provider is not None:
+                await neo4j_provider.close()
             await db.close()
             log.info("aml.api.shutdown ok")
 
@@ -79,5 +99,6 @@ def create_app(*, cors_origins: list[str] | None = None) -> FastAPI:
     app.include_router(parties_router)
     app.include_router(narratives_router)
     app.include_router(audit_router)
+    app.include_router(graph_router)
 
     return app

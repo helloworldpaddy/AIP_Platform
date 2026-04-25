@@ -14,7 +14,7 @@ import { GatePanel } from "@/components/GatePanel";
 import { PartiesPanel } from "@/components/PartiesPanel";
 import { NarrativeEditor } from "@/components/NarrativeEditor";
 import { AuditTrail } from "@/components/AuditTrail";
-import { ChevronLeft, RefreshCw } from "lucide-react";
+import { ChevronLeft, Network, RefreshCw } from "lucide-react";
 
 export function CaseDetailPage() {
   const { caseId } = useParams<{ caseId: string }>();
@@ -99,6 +99,11 @@ export function CaseDetailPage() {
             </span>
           </span>
           <span>· assigned: {state.case.assigned_analyst_id ?? "—"}</span>
+          <Link to={`/cases/${state.case.id}/graph`}>
+            <Button size="sm" variant="ghost">
+              <Network className="h-3.5 w-3.5" /> Graph
+            </Button>
+          </Link>
           <Button size="sm" variant="ghost" onClick={() => stateQuery.refetch()}>
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </Button>

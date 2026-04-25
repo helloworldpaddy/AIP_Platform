@@ -113,6 +113,43 @@ class ObservabilitySettings(BaseSettings):
     model_config = _BASE_CONFIG
 
 
+class Neo4jSettings(BaseSettings):
+    """Investigation-graph connection.
+
+    `auth` follows Neo4j's docker convention of `user/password` so the same
+    `NEO4J_AUTH` env var feeds both the container and this client.
+    """
+
+    uri: str | None = Field(default=None, alias="NEO4J_URI")
+    auth: SecretStr | None = Field(default=None, alias="NEO4J_AUTH")
+    database: str = Field(default="neo4j", alias="NEO4J_DATABASE")
+    connection_timeout_seconds: int = Field(default=10, alias="NEO4J_CONNECT_TIMEOUT")
+
+    model_config = _BASE_CONFIG
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.uri) and bool(self.auth)
+
+    @property
+    def user(self) -> str:
+        return self._auth_parts[0]
+
+    @property
+    def password(self) -> str:
+        return self._auth_parts[1]
+
+    @property
+    def _auth_parts(self) -> tuple[str, str]:
+        if self.auth is None:
+            return ("neo4j", "")
+        raw = self.auth.get_secret_value()
+        if "/" not in raw:
+            return (raw, "")
+        user, _, pwd = raw.partition("/")
+        return (user, pwd)
+
+
 def _yaml_for(cls: type[BaseSettings], section: dict[str, Any]) -> dict[str, Any]:
     """
     Return only the YAML entries whose corresponding env alias is NOT set.
@@ -159,6 +196,7 @@ class Settings:
         self.observability = ObservabilitySettings(
             **_yaml_for(ObservabilitySettings, yaml_data.get("observability", {}))
         )
+        self.neo4j = Neo4jSettings(**_yaml_for(Neo4jSettings, yaml_data.get("neo4j", {})))
 
 
 def _load_yaml() -> dict[str, Any]:
