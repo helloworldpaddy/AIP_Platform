@@ -52,7 +52,10 @@ class NarrativesRepository:
             classification.value,
             rationale,
             markdown_body,
-            [c.model_dump() for c in citations],
+            # mode="json" coerces UUIDs to strings so the JSONB codec can
+            # serialise them; plain model_dump() leaves them as UUID
+            # objects, which json.dumps refuses.
+            [c.model_dump(mode="json") for c in citations],
             created_by,
         )
         return _to_narrative(row)
@@ -80,7 +83,9 @@ class NarrativesRepository:
             narrative_id,
             rationale,
             markdown_body,
-            [c.model_dump() for c in citations] if citations is not None else None,
+            [c.model_dump(mode="json") for c in citations]
+            if citations is not None
+            else None,
             human_modified,
         )
         if row is None:

@@ -86,21 +86,33 @@ class AmlDbClient:
 
     # ------------------------------------------------------------------ pool
     async def _init_connection(self, conn: asyncpg.Connection) -> None:
-        # JSONB ↔ dict
+        """Per-connection one-shot setup (codecs).
+
+        Runs only when asyncpg actually creates a new connection, not on
+        each acquire.  Codecs are client-side state, so they survive the
+        pool's `RESET ALL` on release.
+        """
         await conn.set_type_codec(
             "jsonb",
             encoder=json.dumps,
             decoder=json.loads,
             schema="pg_catalog",
         )
-        # JSON ↔ dict (some columns may be plain json)
         await conn.set_type_codec(
             "json",
             encoder=json.dumps,
             decoder=json.loads,
             schema="pg_catalog",
         )
-        # Make the AML enums + tables resolvable without `aml.` prefix.
+
+    async def _setup_connection(self, conn: asyncpg.Connection) -> None:
+        """Per-acquire session setup (search_path + timeouts).
+
+        asyncpg pool issues `RESET ALL` on release, which wipes
+        `search_path` and `statement_timeout` on the server side.  We
+        re-apply them here so every acquired connection resolves the
+        unqualified `cases`, `agent_runs`, etc. against the `aml` schema.
+        """
         await conn.execute("SET search_path TO aml, public")
         if self._db.statement_timeout_ms:
             await conn.execute(
@@ -118,6 +130,7 @@ class AmlDbClient:
                 min_size=self._db.pool_min,
                 max_size=self._db.pool_max,
                 init=self._init_connection,
+                setup=self._setup_connection,
             )
             log.info(
                 "aml.postgres.pool.connected host=%s db=%s", self._db.host, self._db.name
