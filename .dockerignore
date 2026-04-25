@@ -1,0 +1,34 @@
+# This file is consulted when the build context is the repo root (that's the
+# `context: ..` in docker/docker-compose.yml).  Excluding heavy directories
+# keeps `docker compose build` fast.
+
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Frontend build artifacts + deps
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# Local data + secrets
+.env
+.env.local
+.venv
+venv
+data/uploads
+data/processed
+data/raw
+*.log
+.DS_Store
+
+# Source-control / editor
+.git
+.github
+.idea
+.vscode
+
+# Docker context for sibling Dockerfiles handles its own includes
+docker/.env
