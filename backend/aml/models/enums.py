@@ -1,0 +1,108 @@
+"""String enums that mirror the Postgres ENUM types in `backend/aml/db/schema.sql`.
+
+Keeping these as `str, Enum` makes them JSON-serializable, FastAPI-friendly,
+and trivially comparable against values returned by asyncpg (which decodes
+Postgres enums as plain text).
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+
+
+class CaseStatus(str, Enum):
+    OPEN = "OPEN"
+    IN_PROGRESS = "IN_PROGRESS"
+    AWAITING_REVIEW = "AWAITING_REVIEW"
+    ESCALATED = "ESCALATED"
+    SUBMITTED = "SUBMITTED"
+    CLOSED = "CLOSED"
+
+
+class CaseStage(str, Enum):
+    INTAKE = "INTAKE"
+    INITIAL_ASSESSMENT = "INITIAL_ASSESSMENT"
+    TRANSACTION_ENRICHMENT = "TRANSACTION_ENRICHMENT"
+    DUE_DILIGENCE = "DUE_DILIGENCE"
+    CASE_ANALYSIS = "CASE_ANALYSIS"
+    COMPLETED = "COMPLETED"
+
+
+class CasePriority(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class AgentName(str, Enum):
+    INITIAL_ASSESSMENT = "INITIAL_ASSESSMENT"
+    TRANSACTION_ENRICHMENT = "TRANSACTION_ENRICHMENT"
+    DUE_DILIGENCE = "DUE_DILIGENCE"
+    CASE_ANALYSIS = "CASE_ANALYSIS"
+
+
+class AgentRunStatus(str, Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    AWAITING_REVIEW = "AWAITING_REVIEW"
+    APPROVED = "APPROVED"
+    MODIFIED = "MODIFIED"
+    REJECTED = "REJECTED"
+    FAILED = "FAILED"
+    COMPLETED = "COMPLETED"
+
+
+class EvidenceType(str, Enum):
+    KYC_RECORD = "KYC_RECORD"
+    TRANSACTION = "TRANSACTION"
+    GRAPH_RELATION = "GRAPH_RELATION"
+    EXTERNAL_SEARCH = "EXTERNAL_SEARCH"
+    POLICY_RULE = "POLICY_RULE"
+    SANCTIONS_HIT = "SANCTIONS_HIT"
+    ADVERSE_MEDIA = "ADVERSE_MEDIA"
+    INTERNAL_NOTE = "INTERNAL_NOTE"
+
+
+class Classification(str, Enum):
+    FALSE_POSITIVE = "FALSE_POSITIVE"
+    ESCALATE = "ESCALATE"
+    SAR = "SAR"
+
+
+class GateStatus(str, Enum):
+    OPEN_REQUIRED = "OPEN_REQUIRED"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class ActorType(str, Enum):
+    AGENT = "AGENT"
+    ANALYST = "ANALYST"
+    SYSTEM = "SYSTEM"
+
+
+class AuditEventType(str, Enum):
+    CASE_CREATED = "CASE_CREATED"
+    CASE_STATUS_CHANGED = "CASE_STATUS_CHANGED"
+    CASE_STAGE_ADVANCED = "CASE_STAGE_ADVANCED"
+    AGENT_STARTED = "AGENT_STARTED"
+    AGENT_REASONING = "AGENT_REASONING"
+    AGENT_COMPLETED = "AGENT_COMPLETED"
+    AGENT_FAILED = "AGENT_FAILED"
+    AGENT_RETRIED = "AGENT_RETRIED"
+    EVIDENCE_RECORDED = "EVIDENCE_RECORDED"
+    GATE_OPENED = "GATE_OPENED"
+    GATE_APPROVED = "GATE_APPROVED"
+    GATE_REJECTED = "GATE_REJECTED"
+    HUMAN_OVERRIDE = "HUMAN_OVERRIDE"
+    NARRATIVE_DRAFTED = "NARRATIVE_DRAFTED"
+    NARRATIVE_SUBMITTED = "NARRATIVE_SUBMITTED"
+    RECORD_LOCKED = "RECORD_LOCKED"
+
+
+class PartyType(str, Enum):
+    INDIVIDUAL = "INDIVIDUAL"
+    CORPORATE = "CORPORATE"
+    TRUST = "TRUST"
+    OTHER = "OTHER"

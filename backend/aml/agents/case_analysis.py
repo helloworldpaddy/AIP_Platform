@@ -1,0 +1,89 @@
+"""Agent 4 — Case Analysis & Narrative.
+
+Persists the final narrative directly so submission becomes a one-click
+analyst action: the orchestrator's `submit_narrative(narrative_id, …)`
+both flips `submitted = locked = TRUE` and locks the parent case.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+from .base import AgentContext, AgentResult
+from .llm_agent_base import LlmDrivenAgent
+from .prompts import CASE_ANALYSIS_INSTRUCTION
+from ..models.enums import AgentName, Classification
+from ..models.state import Citation
+
+log = logging.getLogger(__name__)
+
+
+class CaseAnalysisAgent(LlmDrivenAgent):
+    name = AgentName.CASE_ANALYSIS
+    instruction = CASE_ANALYSIS_INSTRUCTION
+    tool_names = ["record_evidence"]  # may add new evidence to anchor narrative
+
+    def build_user_prompt(self, ctx: AgentContext) -> str:
+        case = ctx.state.case
+
+        ia = ctx.state.latest_run(AgentName.INITIAL_ASSESSMENT)
+        te = ctx.state.latest_run(AgentName.TRANSACTION_ENRICHMENT)
+        dd = ctx.state.latest_run(AgentName.DUE_DILIGENCE)
+
+        evidence_index = [
+            {
+                "evidence_id": str(e.id),
+                "type": e.evidence_type.value,
+                "source": e.source_system,
+                "title": e.title,
+                "excerpt": (e.content[:240] + "…") if len(e.content) > 240 else e.content,
+            }
+            for e in ctx.state.evidence
+        ]
+
+        return (
+            f"Case: {case.case_number}\n"
+            f"Subject: {case.subject_party_name} (id={case.subject_party_id})\n"
+            f"Alert type: {case.alert_type}\n\n"
+            "INITIAL ASSESSMENT:\n"
+            f"```json\n{json.dumps(ia.output_payload if ia else None, indent=2, default=str)}\n```\n\n"
+            "TRANSACTION ENRICHMENT:\n"
+            f"```json\n{json.dumps(te.output_payload if te else None, indent=2, default=str)}\n```\n\n"
+            "DUE DILIGENCE:\n"
+            f"```json\n{json.dumps(dd.output_payload if dd else None, indent=2, default=str)}\n```\n\n"
+            "AVAILABLE EVIDENCE (use these IDs in your citations):\n"
+            f"```json\n{json.dumps(evidence_index, indent=2, default=str)}\n```\n\n"
+            "Render the final classification, narrative, and citations per "
+            "the schema in your instructions."
+        )
+
+    async def run(self, ctx: AgentContext) -> AgentResult:
+        # Run the LLM as usual.
+        result = await super().run(ctx)
+        out = result.output_payload
+
+        # If the model produced a usable classification + narrative, persist a
+        # draft narrative now so the analyst sees something to review/submit
+        # without an extra round-trip.
+        try:
+            classification = Classification(out["classification"])
+            citations = [Citation.model_validate(c) for c in out.get("citations", [])]
+            narrative = await ctx.repos.narratives.create(
+                case_id=ctx.state.case.id,
+                classification=classification,
+                rationale=out.get("rationale", ""),
+                markdown_body=out.get("narrative_markdown", ""),
+                citations=citations,
+                created_by=self.name.value,
+            )
+            # Echo the narrative_id back into the output so the UI can deep-link.
+            result.output_payload = {**out, "narrative_id": str(narrative.id)}
+        except (KeyError, ValueError) as err:
+            log.warning(
+                "case_analysis.narrative.skip reason=%s err=%s",
+                "schema_mismatch",
+                err,
+            )
+        return result
