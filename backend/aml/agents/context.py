@@ -12,9 +12,11 @@ even if executed inside an `await` — sees the right context.
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from dataclasses import field
 from typing import Iterator
 from uuid import UUID
 
@@ -27,6 +29,9 @@ class AgentToolContext:
     agent_run_id: UUID
     actor_id: str  # the agent's name, used as evidence.created_by
     repos: AmlRepositories
+    # ADK may execute multiple tool calls concurrently. Our repositories share
+    # a single asyncpg connection, so we must serialize DB writes per agent turn.
+    db_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 _current: ContextVar[AgentToolContext | None] = ContextVar(

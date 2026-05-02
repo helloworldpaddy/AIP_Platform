@@ -73,6 +73,10 @@ Thumbs.db
 # Cursor / Claude local overrides (may contain paths or permissions)
 .claude/settings.local.json
 
+# Ad-hoc npm pack / extract artifacts (do not commit)
+mcp-postgres-*.tgz
+/package/
+
 # ---- Logs & temp ----
 *.log
 logs/

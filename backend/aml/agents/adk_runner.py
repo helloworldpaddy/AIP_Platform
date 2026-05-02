@@ -113,6 +113,8 @@ async def run_adk_turn(
     reasoning_chunks: list[str] = ["[user_prompt]\n" + user_prompt]
     tool_calls: list[ToolCallRecord] = []
     final_text = ""
+    last_model_text = ""
+    last_jsonish_text = ""
     tokens = TokenUsage()
     pending_calls: dict[str, ToolCallRecord] = {}  # name -> last open call
 
@@ -136,6 +138,11 @@ async def run_adk_turn(
                 if text:
                     role = content.role or "model"
                     reasoning_chunks.append(f"[{role} text]\n{text}")
+                    # Keep the latest non-empty model text as a fallback.
+                    if role != "user" and text.strip():
+                        last_model_text = text.strip()
+                        if "```json" in text or text.lstrip().startswith("{"):
+                            last_jsonish_text = text.strip()
                     if event.is_final_response():
                         final_text = text.strip()
 
@@ -168,6 +175,15 @@ async def run_adk_turn(
             await runner.close()
         except Exception:  # pragma: no cover — defensive cleanup
             log.debug("adk_runner.close.error", exc_info=True)
+
+    # Some model responses end with a non-JSON sentinel (e.g. a gate name) or a
+    # final event with only non-text parts. Prefer the last chunk that looks
+    # like it contains the required JSON output.
+    if not final_text or (final_text and "```json" not in final_text and not final_text.lstrip().startswith("{")):
+        if last_jsonish_text:
+            final_text = last_jsonish_text
+        elif last_model_text:
+            final_text = last_model_text
 
     return AdkTurnResult(
         final_text=final_text,

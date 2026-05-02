@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug ADK Agent",
+      "type": "python",
+      "request": "launch",
+      "module": "google.adk.cli",
+      "args": ["run", "agents/aml_investigation"],
+      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/.env"
+    }
+  ]
+}

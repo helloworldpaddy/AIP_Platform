@@ -1,0 +1,53 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Create virtual environment",
+      "type": "shell",
+      "command": "python -m venv .venv",
+      "problemMatcher": []
+    },
+    {
+      "label": "Install dependencies",
+      "type": "shell",
+      "command": ".venv/bin/pip install -r requirements.txt",
+      "problemMatcher": []
+    },
+    {
+      "label": "ADK Run",
+      "type": "shell",
+      "command": ".venv/bin/adk run agents/aml_investigation",
+      "problemMatcher": []
+    },
+    {
+      "label": "ADK Web",
+      "type": "shell",
+      "command": ".venv/bin/adk web",
+      "problemMatcher": []
+    },
+    {
+      "label": "ADK Eval",
+      "type": "shell",
+      "command": ".venv/bin/adk eval agents/aml_investigation eval/",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Tests",
+      "type": "shell",
+      "command": ".venv/bin/pytest tests",
+      "problemMatcher": []
+    },
+    {
+      "label": "Lint",
+      "type": "shell",
+      "command": ".venv/bin/ruff check .",
+      "problemMatcher": []
+    },
+    {
+      "label": "Format",
+      "type": "shell",
+      "command": ".venv/bin/black .",
+      "problemMatcher": []
+    }
+  ]
+}

@@ -171,7 +171,22 @@ tests/aml/
 
 ## Quickstart
 
-### 1. Boot infrastructure
+### Option A (fastest): run the full app via Docker
+
+```bash
+cp docker/.env.example docker/.env       # edit credentials + GEMINI_API_KEY as needed
+docker compose -f docker/docker-compose.yml up -d --build
+```
+
+Then open:
+
+- Frontend: `http://localhost:5173`
+- Backend docs: `http://localhost:8000/docs`
+- Neo4j Browser: `http://localhost:7474`
+
+### Option B (dev): run infra in Docker + backend/frontend locally
+
+### 1. Boot infrastructure (Postgres + Neo4j)
 
 ```bash
 cp docker/.env.example docker/.env       # edit credentials as needed
@@ -225,7 +240,7 @@ Pass `--skip-policies` to skip ingesting `data/samples/` into the RAG store.
 uvicorn backend.aml.main:app --reload --port 8000
 ```
 
-OpenAPI docs at <http://localhost:8000/docs>.
+OpenAPI docs at `http://localhost:8000/docs`.
 
 ### 6. Run the frontend
 

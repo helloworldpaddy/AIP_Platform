@@ -35,7 +35,7 @@ async def record_evidence(
     title: str,
     content: str,
     source_uri: str | None = None,
-    structured_data: dict[str, Any] | None = None,
+    structured_data_json: str | None = None,
     confidence_score: float | None = None,
     contains_pii: bool = False,
 ) -> dict[str, Any]:
@@ -56,20 +56,30 @@ async def record_evidence(
             "error": f"unknown evidence_type {evidence_type!r}; "
             f"must be one of {_EVIDENCE_TYPE_VALUES}",
         }
+    structured_data: dict[str, Any] = {}
+    if structured_data_json:
+        try:
+            import json
+
+            v = json.loads(structured_data_json)
+            structured_data = v if isinstance(v, dict) else {"value": v}
+        except Exception as err:  # noqa: BLE001
+            return {"error": f"structured_data_json must be valid JSON: {err}"}
     ctx = current_tool_context()
-    evidence = await ctx.repos.evidence.record(
-        case_id=ctx.case_id,
-        agent_run_id=ctx.agent_run_id,
-        evidence_type=EvidenceType(evidence_type),
-        source_system=source_system,
-        source_uri=source_uri,
-        title=title,
-        content=content,
-        structured_data=structured_data or {},
-        confidence_score=confidence_score,
-        contains_pii=bool(contains_pii),
-        created_by=ctx.actor_id,
-    )
+    async with ctx.db_lock:
+        evidence = await ctx.repos.evidence.record(
+            case_id=ctx.case_id,
+            agent_run_id=ctx.agent_run_id,
+            evidence_type=EvidenceType(evidence_type),
+            source_system=source_system,
+            source_uri=source_uri,
+            title=title,
+            content=content,
+            structured_data=structured_data,
+            confidence_score=confidence_score,
+            contains_pii=bool(contains_pii),
+            created_by=ctx.actor_id,
+        )
     return {
         "evidence_id": str(evidence.id),
         "evidence_type": evidence.evidence_type.value,
@@ -102,9 +112,9 @@ RECORD_EVIDENCE_SPEC = register_tool(
                     "description": "Verbatim text of the evidence (passage, transaction summary, etc.).",
                 },
                 "source_uri": {"type": "string"},
-                "structured_data": {
-                    "type": "object",
-                    "description": "Optional JSON payload (the raw tool result).",
+                "structured_data_json": {
+                    "type": "string",
+                    "description": "Optional JSON string payload (raw tool result).",
                 },
                 "confidence_score": {
                     "type": "number",
@@ -131,7 +141,7 @@ async def record_party(
     party_type: str,
     hop_distance: int,
     relationship: str | None = None,
-    risk_indicators: dict[str, Any] | None = None,
+    risk_indicators_json: str | None = None,
     source_evidence_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Persist a counter-party identified during graph traversal.
@@ -153,16 +163,26 @@ async def record_party(
     from uuid import UUID  # local import keeps the module import-light
 
     ctx = current_tool_context()
-    party = await ctx.repos.parties.upsert(
-        case_id=ctx.case_id,
-        party_external_id=party_external_id,
-        party_name=party_name,
-        party_type=PartyType(party_type),
-        relationship=relationship,
-        hop_distance=int(hop_distance),
-        risk_indicators=risk_indicators or {},
-        source_evidence_ids=[UUID(e) for e in (source_evidence_ids or [])],
-    )
+    risk_indicators: dict[str, Any] = {}
+    if risk_indicators_json:
+        try:
+            import json
+
+            v = json.loads(risk_indicators_json)
+            risk_indicators = v if isinstance(v, dict) else {"value": v}
+        except Exception as err:  # noqa: BLE001
+            return {"error": f"risk_indicators_json must be valid JSON: {err}"}
+    async with ctx.db_lock:
+        party = await ctx.repos.parties.upsert(
+            case_id=ctx.case_id,
+            party_external_id=party_external_id,
+            party_name=party_name,
+            party_type=PartyType(party_type),
+            relationship=relationship,
+            hop_distance=int(hop_distance),
+            risk_indicators=risk_indicators,
+            source_evidence_ids=[UUID(e) for e in (source_evidence_ids or [])],
+        )
     return {
         "party_id": str(party.id),
         "party_external_id": party.party_external_id,
@@ -186,7 +206,10 @@ RECORD_PARTY_SPEC = register_tool(
                 "party_type": {"type": "string", "enum": _PARTY_TYPE_VALUES},
                 "hop_distance": {"type": "integer", "minimum": 0},
                 "relationship": {"type": "string"},
-                "risk_indicators": {"type": "object"},
+                "risk_indicators_json": {
+                    "type": "string",
+                    "description": "Optional JSON string payload describing risk indicators.",
+                },
                 "source_evidence_ids": {
                     "type": "array",
                     "items": {"type": "string", "description": "evidence_id from record_evidence"},

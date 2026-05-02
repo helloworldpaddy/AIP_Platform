@@ -3,9 +3,12 @@
 
 const KEY = "aml.analystId";
 const EVENT = "aml.analystId.changed";
+const DEFAULT_ANALYST_ID = "analyst.demo";
 
 export function getAnalystId(): string {
-  return (typeof window === "undefined" ? "" : localStorage.getItem(KEY)) ?? "";
+  if (typeof window === "undefined") return "";
+  const v = localStorage.getItem(KEY);
+  return (v && v.trim()) || DEFAULT_ANALYST_ID;
 }
 
 export function setAnalystId(id: string): void {

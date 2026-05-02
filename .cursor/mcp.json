@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "postgres-aml": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://${env:POSTGRES_USER}:${env:POSTGRES_PASSWORD}@127.0.0.1:${env:POSTGRES_PORT}/${env:POSTGRES_DB}"
+      ],
+      "envFile": "${workspaceFolder}/.env"
+    }
+  }
+}
