@@ -48,6 +48,7 @@ export function CaseGraphPage() {
     mutationFn: () => graphApi.syncTransactionsToNeo4j(caseId!),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["case-graph", caseId] });
+      qc.invalidateQueries({ queryKey: ["case", caseId] });
     },
   });
 
@@ -132,13 +133,26 @@ export function CaseGraphPage() {
             size="sm"
             variant="outline"
             disabled={!caseId || syncNeo4j.isPending}
-            title="Upsert case_transactions from Postgres into Neo4j"
+            title="Copies case ledger rows from Postgres into Neo4j so you can expand hops on the graph (idempotent)."
             onClick={() => syncNeo4j.mutate()}
           >
-            {syncNeo4j.isPending ? "Syncing…" : "Sync ledger → Neo4j"}
+            {syncNeo4j.isPending ? "Loading…" : "Load transactions to graph"}
           </Button>
         </div>
       </div>
+      {syncNeo4j.isSuccess && syncNeo4j.data != null && (
+        <p className="text-xs text-muted-foreground">
+          Loaded {syncNeo4j.data.synced} ledger row
+          {syncNeo4j.data.synced === 1 ? "" : "s"} into Neo4j. Turn on{" "}
+          <span className="font-medium text-foreground">include Neo4j hop</span>{" "}
+          and refresh to traverse counterparties.
+        </p>
+      )}
+      {syncNeo4j.isError && (
+        <p className="text-xs text-destructive">
+          {(syncNeo4j.error as Error)?.message ?? "Could not load transactions to graph."}
+        </p>
+      )}
 
       <div className="grid grid-cols-12 gap-4">
         <section className="col-span-12 lg:col-span-9">

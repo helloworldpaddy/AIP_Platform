@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { casesApi } from "@/lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { casesApi, graphApi } from "@/lib/api";
 import { isBlocked, latestRun } from "@/lib/state";
 import type { AgentName } from "@/lib/types";
 import { AGENT_ORDER } from "@/lib/types";
@@ -18,6 +18,7 @@ import { ChevronLeft, Network, RefreshCw } from "lucide-react";
 
 export function CaseDetailPage() {
   const { caseId } = useParams<{ caseId: string }>();
+  const qc = useQueryClient();
   const stateQuery = useQuery({
     queryKey: ["case", caseId],
     queryFn: () => casesApi.get(caseId!),
@@ -30,7 +31,24 @@ export function CaseDetailPage() {
     },
   });
 
+  const loadTransactionsToGraph = useMutation({
+    mutationFn: () => graphApi.syncTransactionsToNeo4j(caseId!),
+    onMutate: () => {
+      setLedgerToGraphMessage(null);
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["case", caseId] });
+      qc.invalidateQueries({ queryKey: ["case-graph", caseId] });
+      setLedgerToGraphMessage(
+        data.synced === 0
+          ? "No ledger rows to push (add transactions first)."
+          : `Loaded ${data.synced} transaction${data.synced === 1 ? "" : "s"} into the graph (Neo4j). Open Graph and enable “include Neo4j hop” to explore.`,
+      );
+    },
+  });
+
   const [selected, setSelected] = useState<AgentName>("INITIAL_ASSESSMENT");
+  const [ledgerToGraphMessage, setLedgerToGraphMessage] = useState<string | null>(null);
 
   // Auto-focus the most recent active agent on first load.
   useEffect(() => {
@@ -132,10 +150,33 @@ export function CaseDetailPage() {
           <PartiesPanel state={state} />
           {(state.case_transactions ?? []).length > 0 && (
             <Card>
-              <CardHeader>
+              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-2">
                 <CardTitle className="text-base">Case transactions</CardTitle>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={loadTransactionsToGraph.isPending}
+                  title="Copy ledger rows from Postgres into Neo4j for graph hops"
+                  onClick={() => loadTransactionsToGraph.mutate()}
+                >
+                  {loadTransactionsToGraph.isPending ? "Loading…" : "Load transactions to graph"}
+                </Button>
               </CardHeader>
               <CardContent className="space-y-3 text-xs">
+                {(ledgerToGraphMessage || loadTransactionsToGraph.isError) && (
+                  <div className="space-y-1 rounded-md border border-border bg-muted/30 p-2">
+                    {ledgerToGraphMessage && (
+                      <p className="text-muted-foreground">{ledgerToGraphMessage}</p>
+                    )}
+                    {loadTransactionsToGraph.isError && (
+                      <p className="text-destructive">
+                        {(loadTransactionsToGraph.error as Error)?.message ??
+                          "Could not load transactions to graph (is Neo4j configured?)"}
+                      </p>
+                    )}
+                  </div>
+                )}
                 {(state.case_transactions ?? []).map((t) => (
                   <div
                     key={t.id}

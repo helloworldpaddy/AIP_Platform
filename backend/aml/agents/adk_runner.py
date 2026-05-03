@@ -1,14 +1,16 @@
-"""Single-turn ADK agent driver.
+"""Single-turn ADK agent driver (ADK 1.x).
 
-Replaces the prior `gemini_runner.py` (which called `google.genai` directly).
-Each AML agent owns a long-lived `google.adk.agents.LlmAgent` instance with
-its instruction + tools baked in; this module spins up an `InMemoryRunner`
-per invocation, feeds the user prompt, and collapses the resulting event
-stream into the same `(final_text, reasoning_log, tool_calls, tokens)`
-shape the rest of the platform expects.
+Each AML workflow stage owns a long-lived :class:`google.adk.agents.LlmAgent`
+(static instruction + ``FunctionTool`` list).  Each orchestrator invocation:
 
-The driver is intentionally separate from the orchestrator and from the
-agent classes so it can be unit-tested with a fake LlmAgent.
+1. Binds :mod:`backend.aml.agents.context` for DB-backed tools.
+2. Creates an :class:`google.adk.runners.InMemoryRunner` + **new** session
+   (no cross-case session bleed).
+3. Streams ``runner.run_async(...)`` and maps events into ``AdkTurnResult``
+   for the orchestrator / audit trail.
+
+Kept separate from :class:`backend.aml.orchestrator.service.Orchestrator`
+so this layer can be tested with a stub ``LlmAgent``.
 """
 
 from __future__ import annotations
@@ -25,11 +27,9 @@ from google.adk.tools import FunctionTool
 from google.genai import types as genai_types
 
 from ..models.state import TokenUsage
+from .adk_config import AML_ADK_APP_NAME, AML_ADK_RUNNER_USER_ID
 
 log = logging.getLogger(__name__)
-
-_APP_NAME = "aml"
-_USER_ID = "orchestrator"
 
 
 # -----------------------------------------------------------------------------
@@ -65,22 +65,28 @@ def build_llm_agent(
     model: str,
     tools: list[FunctionTool],
     temperature: float = 0.1,
+    description: str | None = None,
 ) -> LlmAgent:
     """Construct a long-lived ADK LlmAgent for one of the AML stages.
 
     The same instance is reused across many cases — it carries no per-case
     state.  Per-invocation context (case_id, agent_run_id, repos) flows
     through the `agents.context` contextvar that wraps each run.
+
+    ``description`` is optional metadata (e.g. ADK Web agent picker / docs).
     """
-    return LlmAgent(
-        name=name,
-        model=model,
-        instruction=instruction,
-        tools=list(tools),
-        generate_content_config=genai_types.GenerateContentConfig(
+    kwargs: dict[str, Any] = {
+        "name": name,
+        "model": model,
+        "instruction": instruction,
+        "tools": list(tools),
+        "generate_content_config": genai_types.GenerateContentConfig(
             temperature=temperature,
         ),
-    )
+    }
+    if description:
+        kwargs["description"] = description
+    return LlmAgent(**kwargs)
 
 
 # -----------------------------------------------------------------------------
@@ -101,9 +107,11 @@ async def run_adk_turn(
         * a flat reasoning log suitable for the audit trail
         * cumulative `TokenUsage` from event.usage_metadata
     """
-    runner = InMemoryRunner(agent=adk_agent, app_name=_APP_NAME)
+    runner = InMemoryRunner(agent=adk_agent, app_name=AML_ADK_APP_NAME)
     session = await runner.session_service.create_session(
-        app_name=_APP_NAME, user_id=_USER_ID, session_id=uuid4().hex
+        app_name=AML_ADK_APP_NAME,
+        user_id=AML_ADK_RUNNER_USER_ID,
+        session_id=uuid4().hex,
     )
 
     new_message = genai_types.Content(
@@ -120,7 +128,7 @@ async def run_adk_turn(
 
     try:
         async for event in runner.run_async(
-            user_id=_USER_ID,
+            user_id=AML_ADK_RUNNER_USER_ID,
             session_id=session.id,
             new_message=new_message,
         ):

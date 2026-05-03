@@ -48,6 +48,11 @@ def current_tool_context() -> AgentToolContext:
     return ctx
 
 
+def is_tool_context_bound() -> bool:
+    """True when tools are running inside the AML orchestrator (DB-backed)."""
+    return _current.get() is not None
+
+
 @contextmanager
 def bind_tool_context(ctx: AgentToolContext) -> Iterator[None]:
     token = _current.set(ctx)

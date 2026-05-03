@@ -1,0 +1,42 @@
+ADK Web — AML investigation agents (dev / debug only)
+======================================================
+
+Prerequisites
+-------------
+- Python env with `google-adk` (same as backend `requirements.txt`).
+- `GOOGLE_API_KEY` (or Vertex env vars) for Gemini.
+
+Run the Web UI
+--------------
+From the repository root, use the `agents/` folder as the ADK parent directory
+(the same pattern as `agents/rag_agent/`):
+
+  cd agents
+  export GOOGLE_API_KEY=...   # or load from ../docker/.env
+  adk web --port 8000
+
+Open http://localhost:8000 — pick an agent in the top-left, e.g.:
+
+  aml_initial_assessment
+  aml_transaction_enrichment
+  aml_due_diligence
+  aml_case_analysis
+
+Each folder’s `agent.py` defines `root_agent` for that workflow stage.
+
+Behaviour vs production
+-----------------------
+These modules reuse the same prompts and tool *signatures* as the FastAPI
+orchestrator. Tools are wrapped (`backend/aml/agents/adk_web_tools.py`) so that
+when the orchestrator’s DB context is not present, stub results are returned
+(`adk_web_stub` / `adk_web_note`) instead of failing. With Postgres + providers
+configured and a future context-aware host, real tool paths can run.
+
+Production analyst UI still uses:
+  POST /cases/{case_id}/agents/{agent}/trigger
+
+Docker (optional)
+-----------------
+  docker run --rm -it -p 8000:8000 -v "$PWD:/app" -w /app/agents \
+    -e GOOGLE_API_KEY \
+    aml/backend:dev adk web --host 0.0.0.0 --port 8000

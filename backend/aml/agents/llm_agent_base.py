@@ -1,21 +1,19 @@
-"""Common base for LLM-driven agents (Google ADK).
+"""Common base for LLM-driven agents (**Google ADK 1.x**).
 
-Each concrete agent subclass declares:
-    * `name`              — `AgentName` enum value
-    * `instruction`       — system prompt (from `prompts.py`)
-    * `tool_names`        — list of tool names this agent is allowed to call
-                            (resolved against `tools.ADK_TOOLS`)
-    * `requires_review`   — class-level default (most stages = True)
-    * `build_user_prompt(ctx)` — assemble the per-call user message
-    * `next_gates(...)`   — optional override returning gates to open
+Concrete subclasses declare:
 
-The base class:
-    * Constructs a long-lived `google.adk.agents.LlmAgent` once per process
-      (instruction + tools + model are static; only the user prompt varies).
-    * Sets the `AgentToolContext` for the duration of the LLM call.
-    * Dispatches to `adk_runner.run_adk_turn`.
-    * Parses the structured JSON output the agent emits.
-    * Wraps everything in an `AgentResult`.
+* ``name`` — :class:`backend.aml.models.enums.AgentName`
+* ``instruction`` — system prompt (see ``prompts.py``)
+* ``tool_names`` — keys into :data:`backend.aml.agents.tools.ADK_TOOLS`
+  (each wrapped as :class:`google.adk.tools.FunctionTool`)
+* ``requires_review``, ``build_user_prompt``, optional ``next_gates``
+
+The base class builds one long-lived :class:`google.adk.agents.LlmAgent` per
+process (static instruction + tools + model), binds :mod:`agents.context` for
+each turn, runs :func:`adk_runner.run_adk_turn`, parses JSON output, and
+returns :class:`AgentResult` for the orchestrator.
+
+The orchestrator only sees :class:`base.BaseAgent` — it does not import ADK.
 """
 
 from __future__ import annotations

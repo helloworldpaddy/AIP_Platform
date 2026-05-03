@@ -33,8 +33,24 @@ ADK_TOOLS: dict[str, FunctionTool] = {
 }
 
 
+def validate_adk_tool_names(names: list[str]) -> None:
+    """Ensure every name resolves to a :class:`google.adk.tools.FunctionTool`.
+
+    Call at agent construction time so typos fail fast instead of at runtime
+    inside ``LlmAgent``.
+    """
+    missing = [n for n in names if n not in ADK_TOOLS]
+    if missing:
+        known = ", ".join(sorted(ADK_TOOLS))
+        raise ValueError(
+            f"Unknown ADK tool name(s): {missing}. "
+            f"Register in ADK_TOOLS or fix tool_names. Known: {known}"
+        )
+
+
 def adk_tools_named(names: list[str]) -> list[FunctionTool]:
-    """Resolve a list of tool names to their ADK FunctionTool wrappers."""
+    """Resolve tool names to ADK ``FunctionTool`` instances (declaration order)."""
+    validate_adk_tool_names(names)
     return [ADK_TOOLS[n] for n in names]
 
 
@@ -49,4 +65,5 @@ __all__ = [
     "all_tools",
     "ADK_TOOLS",
     "adk_tools_named",
+    "validate_adk_tool_names",
 ]

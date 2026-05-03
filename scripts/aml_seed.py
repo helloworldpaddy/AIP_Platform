@@ -15,6 +15,7 @@ Usage:
     python scripts/aml_seed.py --case-number AML-DEMO-2026-001 --skip-policies
     python scripts/aml_seed.py --preset mrp-goods
     python scripts/aml_seed.py --preset retail --skip-policies
+    python scripts/aml_seed.py --preset cards --skip-policies
 """
 
 from __future__ import annotations
@@ -73,6 +74,14 @@ class _TxnSeed:
 
 
 @dataclass(frozen=True)
+class _ScenarioTxnBundle:
+    """One monitoring scenario and the ledger rows linked to it."""
+
+    scenario: _ScenarioSeed
+    transactions: tuple[_TxnSeed, ...]
+
+
+@dataclass(frozen=True)
 class _SeedPreset:
     case_number: str
     subject_party_id: str
@@ -85,6 +94,7 @@ class _SeedPreset:
     evidence_content: str
     scenario: _ScenarioSeed | None = None
     transactions: tuple[_TxnSeed, ...] = ()
+    scenario_bundles: tuple[_ScenarioTxnBundle, ...] | None = None
 
 
 _PRESETS: dict[str, _SeedPreset] = {
@@ -200,56 +210,319 @@ _PRESETS: dict[str, _SeedPreset] = {
         ),
     ),
     "retail": _SeedPreset(
-        case_number="AML-RETAIL-2026-001",
-        subject_party_id="party.retail.demo.001",
+        case_number="AML-RETAIL-2026-002",
+        subject_party_id="party.retail.demo.002",
         subject_party_name="Retail Demo Customer",
         alert_type="TRANSACTION_MONITORING",
         alert_payload={
             "rule_id": "TM-RB-001",
             "channel": "retail",
-            "scenario": "cross_border_wire",
+            "scenarios": ["cross_border_wire", "card_velocity"],
         },
         priority=CasePriority.MEDIUM,
         line_of_business=LineOfBusiness.RETAIL_BANKING,
-        evidence_title="Retail TM alert — international wire",
+        evidence_title="Retail TM alert — wires + card corridor",
         evidence_content=(
-            "Synthetic retail banking alert: unusual cross-border wire pattern "
-            "for a consumer checking relationship."
+            "Synthetic retail banking alert: cross-border wires on checking plus "
+            "elevated card / instant-payment activity on the same relationship."
         ),
-        scenario=_ScenarioSeed(
-            scenario_code="TM-RB-XBR-001",
-            title="Cross-border wire — retail checking",
-            trigger_summary="International wire exceeding customer velocity profile",
-            trigger_facts={"origin_channel": "DIGITAL_BANKING"},
-        ),
-        transactions=(
-            _TxnSeed(
-                external_transaction_id="RETAIL-TXN-001",
-                booked_offset_hours=-36,
-                amount="18500.7500",
-                currency="USD",
-                direction="DEBIT",
-                payment_channel="WIRE",
-                product_category="RETAIL_CHECKING",
-                counterparty_name="Foreign Beneficiary Ltd",
-                counterparty_country="GB",
-                channel_details={"beneficiary_bank": "SWIFTGB2L", "purpose": "family_support"},
-                narrative="Outbound international wire initiated via digital banking.",
+        scenario=None,
+        transactions=(),
+        scenario_bundles=(
+            _ScenarioTxnBundle(
+                scenario=_ScenarioSeed(
+                    scenario_code="TM-RB-XBR-001",
+                    title="Cross-border wire — retail checking",
+                    trigger_summary="International wires exceeding customer velocity profile",
+                    trigger_facts={"origin_channel": "DIGITAL_BANKING", "window_days": 30},
+                ),
+                transactions=(
+                    _TxnSeed(
+                        external_transaction_id="RETAIL2-TXN-001",
+                        booked_offset_hours=-12,
+                        amount="18500.7500",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="WIRE",
+                        product_category="RETAIL_CHECKING",
+                        counterparty_name="Beneficiary UK Ltd",
+                        counterparty_external_id="cp.uk.benef.01",
+                        counterparty_country="GB",
+                        channel_details={"beneficiary_bank": "SWIFTGB2L", "purpose": "family_support"},
+                        narrative="Outbound international wire — digital banking initiation.",
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="RETAIL2-TXN-002",
+                        booked_offset_hours=-72,
+                        amount="9200.0000",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="WIRE",
+                        product_category="RETAIL_CHECKING",
+                        counterparty_name="Trade Payables IE",
+                        counterparty_external_id="cp.ie.trade.02",
+                        counterparty_country="IE",
+                        channel_details={"purpose": "goods"},
+                        narrative="Second outbound wire within monitoring window.",
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="RETAIL2-TXN-003",
+                        booked_offset_hours=-120,
+                        amount="3100.5000",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="DIGITAL_BANKING",
+                        product_category="RETAIL_CHECKING",
+                        counterparty_name="Cross-border Transfer Desk",
+                        counterparty_country="US",
+                        channel_details={"rail": "internal_fx_on_us"},
+                        narrative="FX-on-us transfer booked as digital banking.",
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="RETAIL2-TXN-004",
+                        booked_offset_hours=-200,
+                        amount="450.0000",
+                        currency="USD",
+                        direction="CREDIT",
+                        payment_channel="WIRE",
+                        product_category="RETAIL_CHECKING",
+                        counterparty_name="Refund — correspondent",
+                        counterparty_country="GB",
+                        narrative="Incoming wire recall / partial refund.",
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="RETAIL2-TXN-005",
+                        booked_offset_hours=-240,
+                        amount="7600.2500",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="WIRE",
+                        product_category="RETAIL_CHECKING",
+                        counterparty_name="Offshore Holdings PA",
+                        counterparty_external_id="cp.pa.hold.03",
+                        counterparty_country="PA",
+                        channel_details={"purpose_code": "INV"},
+                        narrative="Wire to high-risk corridor counterparty.",
+                    ),
+                ),
             ),
-            _TxnSeed(
-                external_transaction_id="RETAIL-TXN-002",
-                booked_offset_hours=-96,
-                amount="220.0000",
-                currency="USD",
-                direction="DEBIT",
-                payment_channel="CARD_POS",
-                product_category="RETAIL_DEBIT_CARD",
-                counterparty_name="Grocery Mart",
-                counterparty_country="US",
-                mcc="5411",
-                merchant_name="Grocery Mart",
-                channel_details={"network": "VISA", "entry_mode": "CHIP"},
-                narrative="POS debit — baseline domestic spend.",
+            _ScenarioTxnBundle(
+                scenario=_ScenarioSeed(
+                    scenario_code="TM-RB-CARD-VEL-001",
+                    title="Card / instant payment velocity",
+                    trigger_summary="Clustered card and P2P debits inconsistent with profile",
+                    trigger_facts={"window_days": 14, "txn_count": 5},
+                ),
+                transactions=(
+                    _TxnSeed(
+                        external_transaction_id="RETAIL2-TXN-006",
+                        booked_offset_hours=-6,
+                        amount="899.9900",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="CARD_NOT_PRESENT",
+                        product_category="RETAIL_DEBIT_CARD",
+                        counterparty_name="Electronics Direct",
+                        counterparty_country="US",
+                        mcc="5732",
+                        merchant_name="Electronics Direct",
+                        channel_details={"network": "VISA", "entry_mode": "ECOM"},
+                        narrative="Card-not-present electronics purchase.",
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="RETAIL2-TXN-007",
+                        booked_offset_hours=-18,
+                        amount="120.0000",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="CARD_POS",
+                        product_category="RETAIL_DEBIT_CARD",
+                        counterparty_name="Fuel & Go",
+                        counterparty_country="US",
+                        mcc="5541",
+                        merchant_name="Fuel & Go",
+                        channel_details={"network": "MC", "entry_mode": "CHIP"},
+                        narrative="POS fuel purchase.",
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="RETAIL2-TXN-008",
+                        booked_offset_hours=-30,
+                        amount="250.0000",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="P2P_PUSH",
+                        product_category="RETAIL_CHECKING",
+                        counterparty_name="Zelle Recipient",
+                        counterparty_country="US",
+                        channel_details={"network": "ZELLE"},
+                        narrative="Instant push payment — peer.",
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="RETAIL2-TXN-009",
+                        booked_offset_hours=-90,
+                        amount="60.0000",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="ATM",
+                        product_category="RETAIL_DEBIT_CARD",
+                        counterparty_name="ATM Network",
+                        counterparty_country="US",
+                        channel_details={"atm_id": "ATM-US-4412"},
+                        narrative="Cash withdrawal.",
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="RETAIL2-TXN-010",
+                        booked_offset_hours=-110,
+                        amount="1750.0000",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="ACH",
+                        product_category="RETAIL_CHECKING",
+                        counterparty_name="Card Settlement ACH",
+                        counterparty_country="US",
+                        channel_details={"ach_sec_code": "PPD"},
+                        narrative="ACH debit — card payment sweep.",
+                    ),
+                ),
+            ),
+        ),
+    ),
+    "cards": _SeedPreset(
+        case_number="AML-CARDS-2026-001",
+        subject_party_id="party.cards.demo.001",
+        subject_party_name="Cardholder Demo Customer",
+        alert_type="TRANSACTION_MONITORING",
+        alert_payload={
+            "rule_id": "TM-CARDS-008",
+            "channel": "cards",
+            "focus": "velocity_and_cnp_cluster",
+            "mcc_flags": ["5999", "5732", "5812"],
+        },
+        priority=CasePriority.MEDIUM,
+        line_of_business=LineOfBusiness.CARDS,
+        evidence_title="Synthetic Cards TM alert — velocity + CNP cluster",
+        evidence_content=(
+            "Seeded Cards LOB case: elevated debit velocity and card-not-present "
+            "activity inconsistent with baseline spend profile."
+        ),
+        scenario=None,
+        transactions=(),
+        scenario_bundles=(
+            _ScenarioTxnBundle(
+                scenario=_ScenarioSeed(
+                    scenario_code="TM-CARDS-VEL-001",
+                    title="Debit spend velocity — high-risk MCC cluster",
+                    trigger_summary=(
+                        "Multiple debit card authorizations in 48h exceeding "
+                        "rolling velocity thresholds"
+                    ),
+                    trigger_facts={"window_hours": 48, "velocity_band": "HIGH"},
+                ),
+                transactions=(
+                    _TxnSeed(
+                        external_transaction_id="CARDS-TXN-001",
+                        booked_offset_hours=-8,
+                        amount="2499.0000",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="CARD_NOT_PRESENT",
+                        product_category="RETAIL_DEBIT_CARD",
+                        counterparty_name="Digital Goods Marketplace",
+                        counterparty_external_id="cp.merch.dgm.01",
+                        counterparty_country="US",
+                        mcc="5999",
+                        merchant_name="Digital Goods Marketplace",
+                        channel_details={"network": "VISA", "entry_mode": "ECOM"},
+                        narrative="High-value CNP authorization — misc retail MCC.",
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="CARDS-TXN-002",
+                        booked_offset_hours=-22,
+                        amount="189.9900",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="CARD_POS",
+                        product_category="RETAIL_DEBIT_CARD",
+                        counterparty_name="Electronics Outlet",
+                        counterparty_country="US",
+                        mcc="5732",
+                        merchant_name="Electronics Outlet",
+                        channel_details={"network": "MC", "entry_mode": "CHIP"},
+                        narrative="POS electronics — same card product.",
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="CARDS-TXN-003",
+                        booked_offset_hours=-36,
+                        amount="45.5000",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="CARD_CONTACTLESS",
+                        product_category="RETAIL_DEBIT_CARD",
+                        counterparty_name="Quick Cafe",
+                        counterparty_country="US",
+                        mcc="5812",
+                        merchant_name="Quick Cafe",
+                        channel_details={"network": "VISA", "entry_mode": "CONTACTLESS"},
+                        narrative="Contactless dining — velocity window.",
+                    ),
+                ),
+            ),
+            _ScenarioTxnBundle(
+                scenario=_ScenarioSeed(
+                    scenario_code="TM-CARDS-CNP-001",
+                    title="Cross-border CNP and ATM corridor",
+                    trigger_summary=(
+                        "Card-not-present debits from foreign BIN plus ATM cash "
+                        "withdrawal outside home region"
+                    ),
+                    trigger_facts={"window_days": 7, "foreign_bin": True},
+                ),
+                transactions=(
+                    _TxnSeed(
+                        external_transaction_id="CARDS-TXN-004",
+                        booked_offset_hours=-14,
+                        amount="750.0000",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="CARD_NOT_PRESENT",
+                        product_category="RETAIL_CREDIT_CARD",
+                        counterparty_name="Offshore Merchant LV",
+                        counterparty_external_id="cp.lv.merch.02",
+                        counterparty_country="LV",
+                        mcc="5999",
+                        merchant_name="Offshore Merchant LV",
+                        channel_details={"network": "MC", "entry_mode": "ECOM"},
+                        narrative="Cross-border CNP on credit card product.",
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="CARDS-TXN-005",
+                        booked_offset_hours=-50,
+                        amount="200.0000",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="ATM",
+                        product_category="RETAIL_DEBIT_CARD",
+                        counterparty_name="Foreign ATM Network",
+                        counterparty_country="MX",
+                        channel_details={"atm_id": "ATM-MX-9981", "intl": True},
+                        narrative="International ATM cash advance.",
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="CARDS-TXN-006",
+                        booked_offset_hours=-72,
+                        amount="29.9900",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="CARD_POS",
+                        product_category="RETAIL_CREDIT_CARD",
+                        counterparty_name="Local Pharmacy",
+                        counterparty_country="US",
+                        mcc="5912",
+                        merchant_name="Local Pharmacy",
+                        channel_details={"network": "VISA", "entry_mode": "CHIP"},
+                        narrative="Domestic POS baseline spend on credit card.",
+                    ),
+                ),
             ),
         ),
     ),
@@ -281,6 +554,52 @@ async def _seed_case_monitoring(
     preset: _SeedPreset,
     log: logging.Logger,
 ) -> None:
+    if preset.scenario_bundles is not None:
+        bundles = preset.scenario_bundles
+        if not bundles:
+            return
+        now = datetime.now(timezone.utc)
+        total_txns = 0
+        for i, bundle in enumerate(bundles):
+            scen = bundle.scenario
+            scenario_id = await repos.case_monitoring.insert_scenario(
+                case_id,
+                scen.scenario_code,
+                scen.title,
+                trigger_summary=scen.trigger_summary,
+                trigger_facts=scen.trigger_facts,
+                is_primary=(i == 0),
+            )
+            for txn in bundle.transactions:
+                booked_at = now + timedelta(hours=txn.booked_offset_hours)
+                tid = await repos.case_monitoring.insert_transaction(
+                    case_id,
+                    txn.external_transaction_id,
+                    booked_at,
+                    Decimal(txn.amount),
+                    txn.currency,
+                    txn.direction,
+                    txn.payment_channel,
+                    txn.product_category,
+                    counterparty_name=txn.counterparty_name,
+                    counterparty_external_id=txn.counterparty_external_id,
+                    counterparty_country=txn.counterparty_country,
+                    channel_details=txn.channel_details,
+                    mcc=txn.mcc,
+                    merchant_name=txn.merchant_name,
+                    narrative=txn.narrative,
+                    raw_payload={"seeded": True},
+                )
+                await repos.case_monitoring.link_transaction_scenario(tid, scenario_id)
+                total_txns += 1
+        log.info(
+            "seed.case_monitoring.done case_id=%s bundles=%d txns=%d",
+            case_id,
+            len(bundles),
+            total_txns,
+        )
+        return
+
     if preset.scenario is None and not preset.transactions:
         return
     if preset.transactions and preset.scenario is None:
@@ -479,6 +798,7 @@ async def main() -> None:
             evidence_content=preset.evidence_content,
             scenario=preset.scenario,
             transactions=preset.transactions,
+            scenario_bundles=preset.scenario_bundles,
         )
 
     case_id: str | None = None

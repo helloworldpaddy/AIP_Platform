@@ -1,7 +1,12 @@
-"""Default agent registry consumed by the Orchestrator.
+"""Default :class:`base.BaseAgent` registry for :class:`Orchestrator`.
 
-Importing this module also imports every tool module so the tool registry
-is fully populated before the agents are constructed.
+Each value is an AML workflow stage backed by :class:`llm_agent_base.LlmDrivenAgent`
+(ADK ``LlmAgent`` plus ``FunctionTool`` instances).  Importing
+this module loads tool modules so legacy :class:`tools.registry.ToolSpec`
+registration runs before any trigger.
+
+The HTTP surface remains ``POST /cases/{id}/agents/{agent}/trigger`` — the
+frontend does not call ADK directly.
 """
 
 from __future__ import annotations

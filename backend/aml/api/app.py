@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -34,6 +35,20 @@ from .schemas import HealthResponse
 log = logging.getLogger(__name__)
 
 
+def stale_running_threshold_minutes() -> int:
+    """Wall-clock grace period before a RUNNING row is treated as abandoned.
+
+    LLM agents (e.g. Due Diligence) routinely exceed a couple of minutes; the
+    previous default (2m) caused false-positive requeues during normal runs.
+    """
+    raw = os.environ.get("AML_STALE_RUNNING_MINUTES", "30")
+    try:
+        minutes = int(raw)
+    except ValueError:
+        minutes = 30
+    return max(1, min(minutes, 24 * 60))
+
+
 async def reconcile_stale_running_agent_runs(
     db: AmlDbClient,
     *,
@@ -41,6 +56,7 @@ async def reconcile_stale_running_agent_runs(
     note: str,
 ) -> int:
     """Move agent_runs stuck in RUNNING for too long back to PENDING for retry."""
+    minutes = stale_running_threshold_minutes()
     async with db.transaction() as repos:
         stale = await repos.connection.fetch(
             """
@@ -49,8 +65,9 @@ async def reconcile_stale_running_agent_runs(
              WHERE status = 'RUNNING'
                AND completed_at IS NULL
                AND started_at IS NOT NULL
-               AND started_at < (NOW() - INTERVAL '2 minutes')
-            """
+               AND started_at < (NOW() - ($1::int * INTERVAL '1 minute'))
+            """,
+            minutes,
         )
         if not stale:
             return 0
@@ -63,8 +80,9 @@ async def reconcile_stale_running_agent_runs(
              WHERE status = 'RUNNING'
                AND completed_at IS NULL
                AND started_at IS NOT NULL
-               AND started_at < (NOW() - INTERVAL '2 minutes')
-            """
+               AND started_at < (NOW() - ($1::int * INTERVAL '1 minute'))
+            """,
+            minutes,
         )
         for r in stale:
             await repos.audit.append(
@@ -104,7 +122,11 @@ def create_app(*, cors_origins: list[str] | None = None) -> FastAPI:
             note="requeued stale RUNNING run after API restart",
         )
         if n_stale:
-            log.info("aml.api.startup.reconcile_stale_running count=%s", n_stale)
+            log.info(
+                "aml.api.startup.reconcile_stale_running count=%s after_minutes=%s",
+                n_stale,
+                stale_running_threshold_minutes(),
+            )
 
         # Optional: wire the Neo4j-backed GraphProvider if configured.  When
         # `NEO4J_URI` is unset we leave the provider slot empty — the agent
@@ -130,7 +152,11 @@ def create_app(*, cors_origins: list[str] | None = None) -> FastAPI:
                         note="requeued stale RUNNING run (periodic)",
                     )
                     if c:
-                        log.info("aml.api.periodic.reconcile_stale_running count=%s", c)
+                        log.info(
+                            "aml.api.periodic.reconcile_stale_running count=%s after_minutes=%s",
+                            c,
+                            stale_running_threshold_minutes(),
+                        )
                 except asyncio.CancelledError:
                     raise
                 except Exception:  # noqa: BLE001

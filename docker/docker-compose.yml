@@ -141,6 +141,8 @@ services:
       NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/neo4jpass}
       # API + observability --------------------------------------------------
       AML_CORS_ORIGINS: ${AML_CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      # Requeue RUNNING rows only after this many minutes (LLM steps can be slow).
+      AML_STALE_RUNNING_MINUTES: ${AML_STALE_RUNNING_MINUTES:-30}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
