@@ -9,22 +9,57 @@
 --    that fired or are under review — not just a single alert_payload blob.
 -- 2) A normalized transaction ledger hangs off the case so agents and analysts
 --    can reconcile amounts, counterparties, rails, and product context.
--- 3) Payment diversity (Retail, Cards, Services, product-specific attributes)
---    is modeled as:
---      * payment_channel  — how value moved (POS, e-com, card auth, wire, …)
---      * product_category — coarse retail / card / services taxonomy
---      * channel_details  — JSONB for rail-specific fields (MCC, entry mode,
---        merchant id, card product, biller id, invoice ref, etc.)
+-- 3) Payment diversity across the bank’s product set is modeled as:
+--      * payment_channel  — banking rail / delivery channel (branch, ATM, digital,
+--        card, wire, ACH, …). Not “retail” as in e-commerce merchants.
+--      * product_category — banking product line (retail banking = consumer/customer
+--        segment products: checking, savings, debit/credit card, mortgage, etc.;
+--        plus commercial / wealth where relevant).
+--      * channel_details  — JSONB for rail-specific fields (MCC for card spend at
+--        a merchant, entry mode, IMAD/ACH addenda, biller id, etc.).
+-- 4) Transactions and scenarios are many-to-many: link rows in
+--    case_transaction_scenario_links (see below).
+-- 5) Each case is opened under a single Line of Business (LOB) at intake:
+--    CARDS, RETAIL_BANKING, or SERVICES — see `aml.cases.line_of_business` in
+--    schema.sql. Scenario and transaction typing should stay consistent with
+--    that LOB (a case is not multi-LOB).
 --
 -- Relationship sketch
 -- -------------------
 --   cases 1──* case_scenarios
 --   cases 1──* case_transactions
---   case_scenarios *──* case_transactions  (optional link table; a txn may
---     support several scenarios or none if loaded for context only)
+--   case_scenarios *──* case_transactions  via case_transaction_scenario_links
+--     (many-to-many, both directions):
+--       * One transaction may substantiate or explain MULTIPLE scenarios
+--         (e.g. same wire hits velocity + high-risk corridor rules).
+--       * One scenario may be supported by MULTIPLE transactions
+--         (aggregate alert across a pattern of txns).
+--     A transaction can also exist with ZERO links (context-only / pre-linking).
+--
+-- PostgreSQL note: if you already created these ENUM types with older labels
+-- (merchant/e-commerce “retail”), Postgres will not replace them on re-run.
+-- New environments get the definitions below; existing DBs need a deliberate
+-- migration (new type + column alter, or rebuild) before relying on new values.
 -- =============================================================================
 
 SET search_path TO aml, public;
+
+-- -----------------------------------------------------------------------------
+-- Backfill: cases.line_of_business (if DB was created before column existed)
+-- -----------------------------------------------------------------------------
+DO $$ BEGIN
+    CREATE TYPE line_of_business AS ENUM (
+        'CARDS',
+        'RETAIL_BANKING',
+        'SERVICES'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+ALTER TABLE aml.cases
+    ADD COLUMN IF NOT EXISTS line_of_business line_of_business
+    NOT NULL DEFAULT 'RETAIL_BANKING';
+
+CREATE INDEX IF NOT EXISTS idx_cases_line_of_business ON aml.cases (line_of_business);
 
 -- -----------------------------------------------------------------------------
 -- Enumerations
@@ -41,47 +76,49 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
     CREATE TYPE payment_channel AS ENUM (
-        -- Retail (goods / face-to-face or merchant-present not strictly card)
-        'RETAIL_POS',           -- brick & mortar POS
-        'RETAIL_ECOM',          -- merchant e-commerce checkout
-        'RETAIL_MOTO',          -- mail order / telephone order
-        -- Cards (payment card rails)
-        'CARD_ATM',
-        'CARD_POS_CHIP',        -- EMV chip at POS
-        'CARD_POS_CONTACTLESS',
-        'CARD_ECOM',            -- CNP card not split further
-        'CARD_P2P',             -- card-based push to consumer
-        -- Account / service rails (non-card retail)
-        'SERVICE_WIRE',
-        'SERVICE_ACH',
-        'SERVICE_SEPA',
-        'SERVICE_RTP',          -- faster / instant payments
-        'SERVICE_BILL_PAY',     -- biller / aggregator
-        'SERVICE_MOBILE_MONEY',
-        'SERVICE_CRYPTO_FIAT',  -- on/off ramp if you track it
+        -- Service / delivery channel for a retail-banking or other customer (not merchant “retail”)
+        'BRANCH',                 -- teller or platform-assisted in branch
+        'ATM',                    -- cash dispense, deposit, balance inquiry
+        'DIGITAL_BANKING',        -- online / mobile bank: internal xfer, A2A, scheduled xfer
+        'CALL_CENTER',            -- telephone banking–initiated payment / xfer
+        'CARD_POS',               -- debit/credit purchase at physical terminal (customer card)
+        'CARD_CONTACTLESS',       -- tap-to-pay
+        'CARD_NOT_PRESENT',       -- e-com, mail, phone — card auth without chip/tap
+        'P2P_PUSH',               -- e.g. Zelle, bank RTP to consumer, push-to-wallet
+        'WIRE',                   -- Fedwire / SWIFT-style bank wire
+        'ACH',                    -- ACH credit or debit
+        'SEPA',                   -- EU ACH-equivalent if applicable
+        'RTP_INSTANT',            -- instant / real-time payment rail (non-card)
+        'BILL_PAY',               -- bank bill-pay / biller-direct
+        'CHECK',                  -- paper / image check
+        'MOBILE_WALLET_BANK',     -- bank-branded wallet / super-app rail
+        'CRYPTO_FIAT_BRIDGE',     -- on/off ramp if the bank books it
         'OTHER'
     );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
     CREATE TYPE product_category AS ENUM (
-        -- Retail-oriented
-        'RETAIL_HARDLINES',
-        'RETAIL_SOFTLINES',
-        'RETAIL_GROCERY',
-        'RETAIL_DIGITAL_GOODS',
-        'RETAIL_MRP_GOODS',     -- e.g. importer / wholesaler SKUs
-        -- Card-oriented (product/program level)
-        'CARD_CONSUMER_CREDIT',
-        'CARD_CONSUMER_DEBIT',
-        'CARD_COMMERCIAL',
-        'CARD_PREPAID',
-        -- Services & non-goods
-        'SERVICES_PROFESSIONAL',
-        'SERVICES_FREIGHT',
-        'SERVICES_UTILITIES',
-        'SERVICES_SAAS',
-        'SERVICES_FX_REMITTANCE',
+        -- Retail banking (consumer / mass-market customer) — deposit & lending products
+        'RETAIL_CHECKING',
+        'RETAIL_SAVINGS',
+        'RETAIL_MONEY_MARKET',
+        'RETAIL_CERTIFICATE_DEPOSIT',
+        'RETAIL_DEBIT_CARD',
+        'RETAIL_CREDIT_CARD',
+        'RETAIL_MORTGAGE',
+        'RETAIL_HOME_EQUITY',
+        'RETAIL_AUTO_LOAN',
+        'RETAIL_PERSONAL_LOAN',
+        'RETAIL_LINE_OF_CREDIT',
+        'RETAIL_OVERDRAFT_LINE',
+        -- Non–retail-banking segments (same rails, different product set)
+        'SMALL_BUSINESS',
+        'COMMERCIAL',
+        'WEALTH_PRIVATE',
+        -- Cross-cutting / ancillary
+        'FX_REMITTANCE',
+        'SAFE_DEPOSIT_OR_MISC',
         'UNKNOWN'
     );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -98,7 +135,7 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS monitoring_scenario_catalog (
     scenario_code   TEXT PRIMARY KEY,
-    domain          TEXT NOT NULL,  -- e.g. 'RETAIL', 'CARDS', 'SERVICES', 'CROSS_BORDER'
+    domain          TEXT NOT NULL,  -- e.g. 'RETAIL_BANKING', 'CARDS', 'PAYMENTS', 'CROSS_BORDER'
     title           TEXT NOT NULL,
     description     TEXT,
     typical_rules   TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
@@ -185,8 +222,11 @@ CREATE INDEX IF NOT EXISTS idx_case_txn_counterparty ON case_transactions (count
 CREATE INDEX IF NOT EXISTS idx_case_txn_details ON case_transactions USING gin (channel_details jsonb_path_ops);
 
 -- -----------------------------------------------------------------------------
--- Many-to-many: which transactions substantiate which scenarios (optional but useful)
+-- Many-to-many: transactions <-> scenarios
 -- -----------------------------------------------------------------------------
+-- One row per (transaction, scenario) pair. Composite PK prevents duplicates.
+-- link_role / weight / notes optional: e.g. PRIMARY_DRIVER vs CORROBORATING,
+-- or a normalized contribution score for model explainability.
 CREATE TABLE IF NOT EXISTS case_transaction_scenario_links (
     transaction_id  UUID NOT NULL REFERENCES case_transactions(id) ON DELETE CASCADE,
     scenario_id     UUID NOT NULL REFERENCES case_scenarios(id) ON DELETE CASCADE,
@@ -196,7 +236,9 @@ CREATE TABLE IF NOT EXISTS case_transaction_scenario_links (
     PRIMARY KEY (transaction_id, scenario_id)
 );
 
+-- Scenario-centric lookups: “all transactions tied to this scenario”
 CREATE INDEX IF NOT EXISTS idx_txn_scenario_scenario ON case_transaction_scenario_links (scenario_id);
+-- Transaction-centric lookups: covered by PRIMARY KEY (transaction_id, scenario_id)
 
 CREATE OR REPLACE FUNCTION aml.enforce_txn_scenario_same_case() RETURNS trigger AS $$
 DECLARE
@@ -223,17 +265,16 @@ CREATE TRIGGER trg_txn_scenario_same_case
 -- -----------------------------------------------------------------------------
 -- Example channel_details shapes (documentary — not enforced by DB):
 --
--- RETAIL_POS / RETAIL_ECOM:
---   {"store_id":"S-1001","register_id":"3","mcc":"5311","sku_family":"apparel",
---    "channel":"ECOM","device_id":"term-7788"}
+-- DIGITAL_BANKING (retail customer moving money in the mobile app):
+--   {"session_id":"...","device_id":"...","beneficiary_id":"...","xfer_type":"INTERNAL"}
 --
--- CARD_* :
---   {"network":"VISA","card_product":"SIGNATURE","entry_mode":"CHIP",
---    "auth_code":"123456","arn":"...","last4":"4242","3ds":"Y"}
+-- CARD_POS / CARD_NOT_PRESENT (retail customer card; MCC describes merchant, not “retail sector”):
+--   {"network":"VISA","card_product":"CONSUMER_DEBIT","entry_mode":"CHIP",
+--    "mcc":"5411","merchant_name":"...","arn":"...","last4":"4242","3ds":"Y"}
 --
--- SERVICE_WIRE / ACH / BILL_PAY:
+-- WIRE / ACH / BILL_PAY:
 --   {"imad":"...","beneficiary_bank":"XXX","purpose_code":"TRADE",
---    "biller_id":"UTILCO","invoice_ref":"INV-9","iban_hint":"**1234"}
+--    "ach_sec_code":"CCD","biller_id":"UTILCO","invoice_ref":"INV-9","iban_hint":"**1234"}
 
 -- =============================================================================
 -- End of additive schema

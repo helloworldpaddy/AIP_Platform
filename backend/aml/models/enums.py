@@ -35,6 +35,14 @@ class CasePriority(str, Enum):
     CRITICAL = "CRITICAL"
 
 
+class LineOfBusiness(str, Enum):
+    """Bank line of business under which the case was opened (one per case)."""
+
+    CARDS = "CARDS"
+    RETAIL_BANKING = "RETAIL_BANKING"
+    SERVICES = "SERVICES"
+
+
 class AgentName(str, Enum):
     INITIAL_ASSESSMENT = "INITIAL_ASSESSMENT"
     TRANSACTION_ENRICHMENT = "TRANSACTION_ENRICHMENT"

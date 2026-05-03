@@ -159,9 +159,9 @@ class Orchestrator:
         duration_ms = int((time.monotonic() - started) * 1000)
 
         # ---------- Phase 3: persist outcome + audit + gates -----------------
-        async with self._db.transaction() as repos:
-            if isinstance(result_or_err, BaseException):
-                err = result_or_err
+        if isinstance(result_or_err, BaseException):
+            err = result_or_err
+            async with self._db.transaction() as repos:
                 await repos.agent_runs.mark_failed(
                     run_id=run.id,
                     error=f"{err.__class__.__name__}: {err}",
@@ -179,78 +179,121 @@ class Orchestrator:
                     },
                     agent_run_id=run.id,
                 )
-                # Bubble up so the API layer can return 5xx / 429 etc.
-                raise err
+            # Bubble up so the API layer can return 5xx / 429 etc.
+            raise err
 
-            result: AgentResult = result_or_err
-            updated = await repos.agent_runs.mark_completed(
-                run_id=run.id,
-                output_payload=result.output_payload,
-                reasoning=result.reasoning,
-                reasoning_summary=result.reasoning_summary,
-                tokens=result.tokens,
-                duration_ms=duration_ms,
-                requires_review=result.requires_review,
-            )
+        result: AgentResult = result_or_err
+        token_audit = (
+            result.tokens.model_dump(mode="json") if result.tokens else None
+        )
 
-            # CoT — record the reasoning as a separate audit event so
-            # downstream analytics can index it independently.
-            await repos.audit.append(
-                case_id=case_id,
-                actor_type=ActorType.AGENT,
-                actor_id=agent_name.value,
-                event_type=AuditEventType.AGENT_REASONING,
-                event_payload={
-                    "run_id": str(updated.id),
-                    "summary": result.reasoning_summary,
-                    "tokens": result.tokens.model_dump() if result.tokens else None,
-                },
-                reasoning_text=result.reasoning,
-                agent_run_id=updated.id,
-            )
-            await repos.audit.append(
-                case_id=case_id,
-                actor_type=ActorType.AGENT,
-                actor_id=agent_name.value,
-                event_type=AuditEventType.AGENT_COMPLETED,
-                event_payload={
-                    "run_id": str(updated.id),
-                    "duration_ms": duration_ms,
-                    "requires_review": result.requires_review,
-                    "evidence_ids": [str(e) for e in result.new_evidence_ids],
-                    "party_ids": [str(p) for p in result.new_party_ids],
-                },
-                agent_run_id=updated.id,
-            )
+        try:
+            async with self._db.transaction() as repos:
+                updated = await repos.agent_runs.mark_completed(
+                    run_id=run.id,
+                    output_payload=result.output_payload,
+                    reasoning=result.reasoning,
+                    reasoning_summary=result.reasoning_summary,
+                    tokens=result.tokens,
+                    duration_ms=duration_ms,
+                    requires_review=result.requires_review,
+                )
 
-            # Open the gates this agent declared.
-            for gate in result.next_gates:
-                opened = await repos.gates.open(
+                # CoT — record the reasoning as a separate audit event so
+                # downstream analytics can index it independently.
+                await repos.audit.append(
                     case_id=case_id,
-                    gate_name=gate.name,
-                    blocks_agent=gate.blocks_agent,
-                    notes=gate.notes,
+                    actor_type=ActorType.AGENT,
+                    actor_id=agent_name.value,
+                    event_type=AuditEventType.AGENT_REASONING,
+                    event_payload={
+                        "run_id": str(updated.id),
+                        "summary": result.reasoning_summary,
+                        "tokens": token_audit,
+                    },
+                    reasoning_text=result.reasoning,
+                    agent_run_id=updated.id,
                 )
                 await repos.audit.append(
                     case_id=case_id,
-                    actor_type=ActorType.SYSTEM,
-                    actor_id="orchestrator",
-                    event_type=AuditEventType.GATE_OPENED,
+                    actor_type=ActorType.AGENT,
+                    actor_id=agent_name.value,
+                    event_type=AuditEventType.AGENT_COMPLETED,
                     event_payload={
-                        "gate_id": str(opened.id),
-                        "gate_name": opened.gate_name,
-                        "blocks_agent": opened.blocks_agent.value,
+                        "run_id": str(updated.id),
+                        "duration_ms": duration_ms,
+                        "requires_review": result.requires_review,
+                        "evidence_ids": [str(e) for e in result.new_evidence_ids],
+                        "party_ids": [str(p) for p in result.new_party_ids],
                     },
                     agent_run_id=updated.id,
                 )
 
-            # Auto-advance only if the agent didn't ask for HITL.
-            if not result.requires_review:
-                await self._advance_stage(
-                    repos, case_id=case_id, agent_name=agent_name, actor_id="orchestrator"
-                )
+                # Open the gates this agent declared.
+                for gate in result.next_gates:
+                    opened = await repos.gates.open(
+                        case_id=case_id,
+                        gate_name=gate.name,
+                        blocks_agent=gate.blocks_agent,
+                        notes=gate.notes,
+                    )
+                    await repos.audit.append(
+                        case_id=case_id,
+                        actor_type=ActorType.SYSTEM,
+                        actor_id="orchestrator",
+                        event_type=AuditEventType.GATE_OPENED,
+                        event_payload={
+                            "gate_id": str(opened.id),
+                            "gate_name": opened.gate_name,
+                            "blocks_agent": opened.blocks_agent.value,
+                        },
+                        agent_run_id=updated.id,
+                    )
 
-            return updated
+                # Auto-advance only if the agent didn't ask for HITL.
+                if not result.requires_review:
+                    await self._advance_stage(
+                        repos,
+                        case_id=case_id,
+                        agent_name=agent_name,
+                        actor_id="orchestrator",
+                    )
+
+                return updated
+        except Exception as persist_err:
+            # Phase 1 already committed RUNNING. If anything here fails, that txn
+            # rolls back and the row stays RUNNING unless we mark_failed in a
+            # fresh transaction (same pattern as API restart for stale RUNNING).
+            log.exception(
+                "orchestrator.persist_failed case_id=%s run_id=%s agent=%s",
+                case_id,
+                run.id,
+                agent_name.value,
+            )
+            detail = str(persist_err)
+            if len(detail) > 1800:
+                detail = detail[:1800] + "…"
+            async with self._db.transaction() as repos:
+                await repos.agent_runs.mark_failed(
+                    run_id=run.id,
+                    error=f"PersistFailed: {persist_err.__class__.__name__}: {detail}",
+                    duration_ms=duration_ms,
+                )
+                await repos.audit.append(
+                    case_id=case_id,
+                    actor_type=ActorType.AGENT,
+                    actor_id=agent_name.value,
+                    event_type=AuditEventType.AGENT_FAILED,
+                    event_payload={
+                        "run_id": str(run.id),
+                        "phase": "persist_after_successful_agent_run",
+                        "error_class": persist_err.__class__.__name__,
+                        "detail": detail,
+                        "duration_ms": duration_ms,
+                    },
+                    agent_run_id=run.id,
+                )
+            raise persist_err
 
     async def _execute_with_retry(
         self,

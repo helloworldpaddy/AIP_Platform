@@ -161,6 +161,11 @@ export const graphApi = {
     const q = qs.toString();
     return request<CaseGraphResponse>(`/cases/${caseId}/graph${q ? `?${q}` : ""}`);
   },
+  /** Upsert Postgres `case_transactions` into Neo4j for hop traversal. */
+  syncTransactionsToNeo4j: (caseId: string) =>
+    request<{ synced: number }>(`/cases/${caseId}/graph/sync-transactions`, {
+      method: "POST",
+    }),
 };
 
 export const metaApi = {

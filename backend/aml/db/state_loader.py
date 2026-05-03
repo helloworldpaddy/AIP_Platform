@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import asyncpg
+
 from ..models.enums import AgentName, AgentRunStatus, CaseStage, GateStatus
 from ..models.state import (
     AgentRun,
@@ -78,6 +80,13 @@ async def load_investigation_state(
     gates = await repos.gates.list_for_case(case_id)
     narratives = await repos.narratives.list_for_case(case_id)
 
+    try:
+        case_transactions = await repos.case_monitoring.list_transactions_for_case(
+            case_id
+        )
+    except asyncpg.exceptions.UndefinedTableError:
+        case_transactions = []
+
     progress = [
         _progress_for(stage, agent, agent_runs, gates)
         for stage, agent in _STAGE_AGENT.items()
@@ -92,4 +101,5 @@ async def load_investigation_state(
         gates=gates,
         narratives=narratives,
         progress=progress,
+        case_transactions=case_transactions,
     )

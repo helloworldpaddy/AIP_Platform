@@ -96,8 +96,9 @@ export function CasesPage() {
                         <PriorityBadge priority={c.priority} />
                       </div>
                       <div className="mt-1 truncate text-xs text-muted-foreground">
-                        {c.subject_party_name} · {c.alert_type} ·{" "}
-                        {c.assigned_analyst_id ?? "unassigned"}
+                        {c.subject_party_name} ·{" "}
+                        {(c.line_of_business ?? "RETAIL_BANKING").replace(/_/g, " ").toLowerCase()} ·{" "}
+                        {c.alert_type} · {c.assigned_analyst_id ?? "unassigned"}
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">

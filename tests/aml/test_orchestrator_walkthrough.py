@@ -25,6 +25,7 @@ from backend.aml.models.enums import (
     CaseStage,
     CaseStatus,
     GateStatus,
+    LineOfBusiness,
 )
 from backend.aml.models.state import CaseCreate
 from backend.aml.orchestrator import GateBlocked, Orchestrator
@@ -39,6 +40,7 @@ async def _create_case(db: AmlDbClient, *, case_number: str):
         alert_payload={"rule_id": "TM-001", "amount": 250_000},
         subject_party_id="P-SUBJECT-001",
         subject_party_name="Jane Doe",
+        line_of_business=LineOfBusiness.RETAIL_BANKING,
         priority=CasePriority.HIGH,
         assigned_analyst_id="analyst.test",
         created_by="seed",

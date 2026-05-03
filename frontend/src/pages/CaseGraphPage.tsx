@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ForceGraph2D from "react-force-graph-2d";
 import { ChevronLeft, RefreshCw, Network } from "lucide-react";
 import { graphApi } from "@/lib/api";
@@ -34,6 +34,7 @@ function nodeSize(node: GraphNode): number {
 
 export function CaseGraphPage() {
   const { caseId } = useParams<{ caseId: string }>();
+  const qc = useQueryClient();
   const [includeNeo4j, setIncludeNeo4j] = useState(false);
   const [hop, setHop] = useState(1);
 
@@ -41,6 +42,13 @@ export function CaseGraphPage() {
     queryKey: ["case-graph", caseId, includeNeo4j, hop],
     queryFn: () => graphApi.get(caseId!, { includeNeo4j, hop }),
     enabled: !!caseId,
+  });
+
+  const syncNeo4j = useMutation({
+    mutationFn: () => graphApi.syncTransactionsToNeo4j(caseId!),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["case-graph", caseId] });
+    },
   });
 
   // ForceGraph2D mutates link source/target into node refs. Clone before render
@@ -119,6 +127,15 @@ export function CaseGraphPage() {
           </select>
           <Button size="sm" variant="ghost" onClick={() => graphQuery.refetch()}>
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!caseId || syncNeo4j.isPending}
+            title="Upsert case_transactions from Postgres into Neo4j"
+            onClick={() => syncNeo4j.mutate()}
+          >
+            {syncNeo4j.isPending ? "Syncing…" : "Sync ledger → Neo4j"}
           </Button>
         </div>
       </div>

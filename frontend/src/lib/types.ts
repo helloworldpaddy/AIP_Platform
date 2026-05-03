@@ -18,6 +18,9 @@ export type CaseStage =
 
 export type CasePriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
+/** Bank line of business for the case (exactly one at intake). */
+export type LineOfBusiness = "CARDS" | "RETAIL_BANKING" | "SERVICES";
+
 export type AgentName =
   | "INITIAL_ASSESSMENT"
   | "TRANSACTION_ENRICHMENT"
@@ -77,6 +80,7 @@ export interface Case {
   alert_payload: Record<string, unknown>;
   subject_party_id: string;
   subject_party_name: string;
+  line_of_business?: LineOfBusiness;
   status: CaseStatus;
   current_stage: CaseStage;
   priority: CasePriority;
@@ -217,6 +221,24 @@ export interface StageProgress {
   completed_at: string | null;
 }
 
+/** Rows from `aml.case_transactions` (monitoring ledger). */
+export interface CaseTransaction {
+  id: string;
+  case_id: string;
+  external_transaction_id: string;
+  booked_at: string;
+  /** JSON may serialize `Decimal` as a number. */
+  amount: string | number;
+  currency: string;
+  direction: string;
+  payment_channel: string;
+  product_category: string;
+  counterparty_name: string | null;
+  counterparty_external_id: string | null;
+  counterparty_country: string | null;
+  narrative: string | null;
+}
+
 export interface InvestigationState {
   case: Case;
   agent_runs: AgentRun[];
@@ -225,6 +247,7 @@ export interface InvestigationState {
   gates: HumanGate[];
   narratives: Narrative[];
   progress: StageProgress[];
+  case_transactions: CaseTransaction[];
 }
 
 export interface CaseSummary {
@@ -236,6 +259,8 @@ export interface CaseSummary {
   priority: CasePriority;
   assigned_analyst_id: string | null;
   subject_party_name: string;
+  /** Present when DB view `v_case_summary` includes column (omit if view stale). */
+  line_of_business?: LineOfBusiness;
   created_at: string;
   updated_at: string;
   [k: string]: unknown;
@@ -247,6 +272,7 @@ export interface CaseCreate {
   alert_payload: Record<string, unknown>;
   subject_party_id: string;
   subject_party_name: string;
+  line_of_business?: LineOfBusiness;
   priority?: CasePriority;
   assigned_analyst_id?: string | null;
   created_by: string;

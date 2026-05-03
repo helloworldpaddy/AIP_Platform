@@ -24,10 +24,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 
 from agents.rag_agent.config.settings import get_settings
+
+from ..models.state import CaseTransaction
 
 log = logging.getLogger(__name__)
 
@@ -138,6 +141,28 @@ class Neo4jGraphProvider:
             }
             for r in records
         ]
+
+    async def sync_case_transactions(
+        self,
+        *,
+        subject_party_id: str,
+        subject_party_name: str,
+        case_id: UUID,
+        transactions: list[CaseTransaction],
+    ) -> int:
+        """Upsert monitoring ledger rows into Neo4j (see `case_transactions_neo4j_sync`)."""
+        if self._driver is None:
+            raise RuntimeError("Neo4jGraphProvider not connected — call connect() first")
+        from .case_transactions_neo4j_sync import sync_case_transactions_to_neo4j
+
+        return await sync_case_transactions_to_neo4j(
+            self._driver,
+            database=self._database,
+            subject_party_id=subject_party_id,
+            subject_party_name=subject_party_name,
+            case_id=case_id,
+            transactions=transactions,
+        )
 
 
 def build_neo4j_provider_if_configured() -> Neo4jGraphProvider | None:

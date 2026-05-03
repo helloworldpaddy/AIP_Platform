@@ -46,6 +46,14 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
+    CREATE TYPE line_of_business AS ENUM (
+        'CARDS',            -- card issuing / acquiring LOB (bank-defined)
+        'RETAIL_BANKING',   -- consumer / mass-market banking (deposits, lending, …)
+        'SERVICES'          -- payments ops, treasury, trade, institutional services, etc.
+    );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
     CREATE TYPE agent_name AS ENUM (
         'INITIAL_ASSESSMENT',
         'TRANSACTION_ENRICHMENT',
@@ -127,6 +135,8 @@ CREATE TABLE IF NOT EXISTS cases (
     alert_payload       JSONB        NOT NULL,                    -- raw alert from upstream
     subject_party_id    TEXT         NOT NULL,                    -- the customer being investigated
     subject_party_name  TEXT         NOT NULL,
+    -- Exactly one LOB per case at intake (Cards, Retail banking, or Services).
+    line_of_business    line_of_business NOT NULL DEFAULT 'RETAIL_BANKING',
     status              case_status  NOT NULL DEFAULT 'OPEN',
     current_stage       case_stage   NOT NULL DEFAULT 'INTAKE',
     priority            case_priority NOT NULL DEFAULT 'MEDIUM',
@@ -146,6 +156,7 @@ CREATE INDEX IF NOT EXISTS idx_cases_stage           ON cases (current_stage);
 CREATE INDEX IF NOT EXISTS idx_cases_assigned        ON cases (assigned_analyst_id);
 CREATE INDEX IF NOT EXISTS idx_cases_created_at      ON cases (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_cases_subject         ON cases (subject_party_id);
+CREATE INDEX IF NOT EXISTS idx_cases_line_of_business ON cases (line_of_business);
 CREATE INDEX IF NOT EXISTS idx_cases_alert_payload   ON cases USING gin (alert_payload jsonb_path_ops);
 
 -- -----------------------------------------------------------------------------
@@ -405,6 +416,7 @@ SELECT
     c.status,
     c.current_stage,
     c.priority,
+    c.line_of_business,
     c.assigned_analyst_id,
     c.subject_party_name,
     (SELECT COUNT(*) FROM agent_runs ar  WHERE ar.case_id  = c.id) AS agent_runs_count,

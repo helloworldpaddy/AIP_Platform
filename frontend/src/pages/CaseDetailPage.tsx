@@ -25,7 +25,7 @@ export function CaseDetailPage() {
     refetchInterval: (q) => {
       const data = q.state.data;
       if (!data) return false;
-      const anyRunning = data.agent_runs.some((r) => r.status === "RUNNING" || r.status === "PENDING");
+      const anyRunning = data.agent_runs.some((r) => r.status === "RUNNING");
       return anyRunning ? 3_000 : false;
     },
   });
@@ -46,7 +46,8 @@ export function CaseDetailPage() {
   const subtitle = useMemo(() => {
     const s = stateQuery.data;
     if (!s) return "";
-    return `${s.case.alert_type} · subject ${s.case.subject_party_name} (${s.case.subject_party_id})`;
+    const lob = (s.case.line_of_business ?? "RETAIL_BANKING").replace(/_/g, " ").toLowerCase();
+    return `${s.case.alert_type} · LOB: ${lob} · subject ${s.case.subject_party_name} (${s.case.subject_party_id})`;
   }, [stateQuery.data]);
 
   if (!caseId) return null;
@@ -129,6 +130,40 @@ export function CaseDetailPage() {
         <aside className="col-span-12 space-y-4 lg:col-span-3">
           <GatePanel state={state} />
           <PartiesPanel state={state} />
+          {(state.case_transactions ?? []).length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Case transactions</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-xs">
+                {(state.case_transactions ?? []).map((t) => (
+                  <div
+                    key={t.id}
+                    className="border-b border-border pb-2 last:border-0 last:pb-0"
+                  >
+                    <div className="font-mono text-[11px] text-muted-foreground">
+                      {t.external_transaction_id}
+                    </div>
+                    <div className="mt-0.5 font-medium">
+                      {String(t.amount)} {t.currency} · {t.direction} ·{" "}
+                      {t.payment_channel.replace(/_/g, " ")}
+                    </div>
+                    <div className="text-muted-foreground">
+                      {t.product_category.replace(/_/g, " ")}
+                      {t.counterparty_name ? ` · ${t.counterparty_name}` : ""}
+                      {t.counterparty_country ? ` (${t.counterparty_country})` : ""}
+                    </div>
+                    {t.narrative && (
+                      <div className="mt-1 text-muted-foreground">{t.narrative}</div>
+                    )}
+                    <div className="mt-0.5 text-[10px] text-muted-foreground">
+                      {new Date(t.booked_at).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
         </aside>
       </div>
 

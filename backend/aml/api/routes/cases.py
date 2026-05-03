@@ -37,6 +37,7 @@ async def create_case(
                 "case_number": case.case_number,
                 "alert_type": case.alert_type,
                 "priority": case.priority.value,
+                "line_of_business": case.line_of_business.value,
             },
         )
         return case

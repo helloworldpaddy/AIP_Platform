@@ -6,6 +6,7 @@ any singleton via `app.dependency_overrides`.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -33,6 +34,59 @@ from .schemas import HealthResponse
 log = logging.getLogger(__name__)
 
 
+async def reconcile_stale_running_agent_runs(
+    db: AmlDbClient,
+    *,
+    actor_id: str,
+    note: str,
+) -> int:
+    """Move agent_runs stuck in RUNNING for too long back to PENDING for retry."""
+    async with db.transaction() as repos:
+        stale = await repos.connection.fetch(
+            """
+            SELECT id, case_id, agent, started_at
+              FROM agent_runs
+             WHERE status = 'RUNNING'
+               AND completed_at IS NULL
+               AND started_at IS NOT NULL
+               AND started_at < (NOW() - INTERVAL '2 minutes')
+            """
+        )
+        if not stale:
+            return 0
+        await repos.connection.execute(
+            """
+            UPDATE agent_runs
+               SET status = 'PENDING',
+                   started_at = NULL,
+                   error = COALESCE(error, '') || E'\n[system] Requeued after stale RUNNING.'
+             WHERE status = 'RUNNING'
+               AND completed_at IS NULL
+               AND started_at IS NOT NULL
+               AND started_at < (NOW() - INTERVAL '2 minutes')
+            """
+        )
+        for r in stale:
+            await repos.audit.append(
+                case_id=r["case_id"],
+                actor_type=ActorType.SYSTEM,
+                actor_id=actor_id,
+                event_type=AuditEventType.AGENT_FAILED,
+                event_payload={
+                    "run_id": str(r["id"]),
+                    "agent": r["agent"],
+                    "note": note,
+                    "started_at": (
+                        r["started_at"].isoformat()
+                        if r["started_at"] is not None
+                        else None
+                    ),
+                },
+                agent_run_id=r["id"],
+            )
+        return len(stale)
+
+
 def create_app(*, cors_origins: list[str] | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -44,51 +98,13 @@ def create_app(*, cors_origins: list[str] | None = None) -> FastAPI:
         set_kyc_provider(DemoKycProvider())
         set_search_provider(DemoSearchProvider())
 
-        # If the API process is restarted while an agent is mid-flight, the DB row
-        # can remain stuck in RUNNING forever. Reconcile those orphaned runs back
-        # to PENDING so a re-trigger can safely resume.
-        async with db.transaction() as repos:
-            stale = await repos.connection.fetch(
-                """
-                SELECT id, case_id, agent, started_at
-                  FROM agent_runs
-                 WHERE status = 'RUNNING'
-                   AND completed_at IS NULL
-                   AND started_at IS NOT NULL
-                   AND started_at < (NOW() - INTERVAL '2 minutes')
-                """
-            )
-            if stale:
-                await repos.connection.execute(
-                    """
-                    UPDATE agent_runs
-                       SET status = 'PENDING',
-                           started_at = NULL,
-                           error = COALESCE(error, '') || E'\n[system] Requeued after API restart (stale RUNNING).'
-                     WHERE status = 'RUNNING'
-                       AND completed_at IS NULL
-                       AND started_at IS NOT NULL
-                       AND started_at < (NOW() - INTERVAL '2 minutes')
-                    """
-                )
-                for r in stale:
-                    await repos.audit.append(
-                        case_id=r["case_id"],
-                        actor_type=ActorType.SYSTEM,
-                        actor_id="api-startup",
-                        event_type=AuditEventType.AGENT_FAILED,
-                        event_payload={
-                            "run_id": str(r["id"]),
-                            "agent": r["agent"],
-                            "note": "requeued stale RUNNING run after API restart",
-                            "started_at": (
-                                r["started_at"].isoformat()
-                                if r["started_at"] is not None
-                                else None
-                            ),
-                        },
-                        agent_run_id=r["id"],
-                    )
+        n_stale = await reconcile_stale_running_agent_runs(
+            db,
+            actor_id="api-startup",
+            note="requeued stale RUNNING run after API restart",
+        )
+        if n_stale:
+            log.info("aml.api.startup.reconcile_stale_running count=%s", n_stale)
 
         # Optional: wire the Neo4j-backed GraphProvider if configured.  When
         # `NEO4J_URI` is unset we leave the provider slot empty — the agent
@@ -104,10 +120,33 @@ def create_app(*, cors_origins: list[str] | None = None) -> FastAPI:
                 log.exception("aml.api.neo4j.connect_failed")
                 neo4j_provider = None
 
+        async def _reconcile_loop() -> None:
+            while True:
+                await asyncio.sleep(120)
+                try:
+                    c = await reconcile_stale_running_agent_runs(
+                        db,
+                        actor_id="periodic-reconcile",
+                        note="requeued stale RUNNING run (periodic)",
+                    )
+                    if c:
+                        log.info("aml.api.periodic.reconcile_stale_running count=%s", c)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    log.exception("aml.api.periodic.reconcile_stale_running.failed")
+
+        reconcile_task = asyncio.create_task(_reconcile_loop())
+
         log.info("aml.api.startup ok neo4j=%s", neo4j_provider is not None)
         try:
             yield
         finally:
+            reconcile_task.cancel()
+            try:
+                await reconcile_task
+            except asyncio.CancelledError:
+                pass
             if neo4j_provider is not None:
                 await neo4j_provider.close()
             await db.close()

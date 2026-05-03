@@ -17,6 +17,7 @@ re-hydrates the state for the next stage.
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -33,6 +34,7 @@ from .enums import (
     Classification,
     EvidenceType,
     GateStatus,
+    LineOfBusiness,
     PartyType,
 )
 
@@ -68,6 +70,7 @@ class Case(_ORMBase):
     alert_payload: dict[str, Any] = Field(default_factory=dict)
     subject_party_id: str
     subject_party_name: str
+    line_of_business: LineOfBusiness = LineOfBusiness.RETAIL_BANKING
     status: CaseStatus = CaseStatus.OPEN
     current_stage: CaseStage = CaseStage.INTAKE
     priority: CasePriority = CasePriority.MEDIUM
@@ -92,6 +95,7 @@ class CaseCreate(BaseModel):
     alert_payload: dict[str, Any]
     subject_party_id: str
     subject_party_name: str
+    line_of_business: LineOfBusiness = LineOfBusiness.RETAIL_BANKING
     priority: CasePriority = CasePriority.MEDIUM
     assigned_analyst_id: str | None = None
     created_by: str
@@ -258,6 +262,26 @@ class AuditEvent(_ORMBase):
     created_at: datetime
 
 
+class CaseTransaction(BaseModel):
+    """Banking transaction row from `aml.case_transactions` (read model)."""
+
+    model_config = ConfigDict(from_attributes=True, extra="ignore")
+
+    id: UUID
+    case_id: UUID
+    external_transaction_id: str
+    booked_at: datetime
+    amount: Decimal
+    currency: str
+    direction: str
+    payment_channel: str
+    product_category: str
+    counterparty_name: str | None = None
+    counterparty_external_id: str | None = None
+    counterparty_country: str | None = None
+    narrative: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Aggregate: stage progress + InvestigationState
 # ---------------------------------------------------------------------------
@@ -296,6 +320,7 @@ class InvestigationState(BaseModel):
     gates: list[HumanGate] = Field(default_factory=list)
     narratives: list[Narrative] = Field(default_factory=list)
     progress: list[StageProgress] = Field(default_factory=list)
+    case_transactions: list[CaseTransaction] = Field(default_factory=list)
 
     # Convenience read-only helpers --------------------------------------------
 

@@ -33,6 +33,7 @@ from agents.rag_agent.config.settings import get_settings
 from .repositories import (
     AgentRunsRepository,
     AuditRepository,
+    CaseMonitoringRepository,
     CasePartiesRepository,
     CasesRepository,
     EvidenceRepository,
@@ -53,6 +54,7 @@ class AmlRepositories:
     __slots__ = (
         "_conn",
         "cases",
+        "case_monitoring",
         "agent_runs",
         "evidence",
         "parties",
@@ -64,6 +66,7 @@ class AmlRepositories:
     def __init__(self, conn: asyncpg.Connection) -> None:
         self._conn = conn
         self.cases = CasesRepository(conn)
+        self.case_monitoring = CaseMonitoringRepository(conn)
         self.agent_runs = AgentRunsRepository(conn)
         self.evidence = EvidenceRepository(conn)
         self.parties = CasePartiesRepository(conn)

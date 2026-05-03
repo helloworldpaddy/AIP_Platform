@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { casesApi, ApiError } from "@/lib/api";
-import type { CasePriority } from "@/lib/types";
+import type { CasePriority, LineOfBusiness } from "@/lib/types";
 import { getAnalystId } from "@/lib/analyst";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -17,6 +17,12 @@ interface Props {
 
 const PRIORITIES: CasePriority[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
+const LINES_OF_BUSINESS: { value: LineOfBusiness; label: string }[] = [
+  { value: "CARDS", label: "Cards" },
+  { value: "RETAIL_BANKING", label: "Retail banking" },
+  { value: "SERVICES", label: "Services" },
+];
+
 export function CreateCaseDialog({ open, onClose }: Props) {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -27,6 +33,7 @@ export function CreateCaseDialog({ open, onClose }: Props) {
   const [subjectId, setSubjectId] = useState("");
   const [subjectName, setSubjectName] = useState("");
   const [priority, setPriority] = useState<CasePriority>("MEDIUM");
+  const [lineOfBusiness, setLineOfBusiness] = useState<LineOfBusiness>("RETAIL_BANKING");
   const [alertPayload, setAlertPayload] = useState("{\n  \n}");
   const [error, setError] = useState<string | null>(null);
 
@@ -44,6 +51,7 @@ export function CreateCaseDialog({ open, onClose }: Props) {
         alert_payload: payload,
         subject_party_id: subjectId.trim(),
         subject_party_name: subjectName.trim(),
+        line_of_business: lineOfBusiness,
         priority,
         created_by: getAnalystId() || "system",
       });
@@ -99,6 +107,18 @@ export function CreateCaseDialog({ open, onClose }: Props) {
             {PRIORITIES.map((p) => (
               <option key={p} value={p}>
                 {p}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Line of business">
+          <Select
+            value={lineOfBusiness}
+            onChange={(e) => setLineOfBusiness(e.target.value as LineOfBusiness)}
+          >
+            {LINES_OF_BUSINESS.map((lob) => (
+              <option key={lob.value} value={lob.value}>
+                {lob.label}
               </option>
             ))}
           </Select>

@@ -23,9 +23,10 @@ class CasesRepository:
             INSERT INTO cases (
                 case_number, alert_type, alert_payload,
                 subject_party_id, subject_party_name,
+                line_of_business,
                 priority, assigned_analyst_id, created_by, updated_by
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
             RETURNING *
             """,
             dto.case_number,
@@ -33,6 +34,7 @@ class CasesRepository:
             dto.alert_payload,
             dto.subject_party_id,
             dto.subject_party_name,
+            dto.line_of_business.value,
             dto.priority.value,
             dto.assigned_analyst_id,
             dto.created_by,

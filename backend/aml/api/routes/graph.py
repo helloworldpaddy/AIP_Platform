@@ -15,6 +15,7 @@ Transaction Enrichment agent.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -22,10 +23,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ...agents.tools import data_tools
 from ...db.client import AmlDbClient
-from ..dependencies import get_db, get_state
+from ...models.state import InvestigationState
+from ..dependencies import current_analyst, get_db, get_state
 from ..schemas import CaseGraphResponse, GraphLink, GraphNode
 
 router = APIRouter(prefix="/cases", tags=["graph"])
+
+log = logging.getLogger(__name__)
 
 
 @router.get("/{case_id}/graph", response_model=CaseGraphResponse)
@@ -142,3 +146,40 @@ async def get_case_graph(
         links=links,
         source=source,
     )
+
+
+@router.post("/{case_id}/graph/sync-transactions")
+async def sync_case_transactions_to_neo4j(
+    case_id: UUID,
+    state: InvestigationState = Depends(get_state),
+    analyst: str = Depends(current_analyst),
+) -> dict[str, int]:
+    """Materialize `case_transactions` from Postgres into Neo4j (idempotent).
+
+    Requires Neo4j wired at API startup. Uses the same Party/Relationship shape
+    as `hop_neighbors` (`last_seen` on :TRANSFERRED_TO from ledger `booked_at`).
+    """
+    provider = data_tools._graph_provider
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Neo4j graph provider not configured",
+        )
+
+    txns = state.case_transactions
+    if not txns:
+        return {"synced": 0}
+
+    log.info(
+        "graph.sync_transactions case_id=%s analyst=%s rows=%s",
+        case_id,
+        analyst,
+        len(txns),
+    )
+    n = await provider.sync_case_transactions(
+        subject_party_id=state.case.subject_party_id,
+        subject_party_name=state.case.subject_party_name,
+        case_id=case_id,
+        transactions=txns,
+    )
+    return {"synced": n}

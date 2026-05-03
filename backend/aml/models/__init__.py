@@ -16,6 +16,7 @@ from .enums import (
     Classification,
     EvidenceType,
     GateStatus,
+    LineOfBusiness,
     PartyType,
 )
 from .state import (
@@ -23,6 +24,7 @@ from .state import (
     AuditEvent,
     Case,
     CaseParty,
+    CaseTransaction,
     Citation,
     Evidence,
     HumanGate,
@@ -43,12 +45,14 @@ __all__ = [
     "Classification",
     "EvidenceType",
     "GateStatus",
+    "LineOfBusiness",
     "PartyType",
     # state
     "AgentRun",
     "AuditEvent",
     "Case",
     "CaseParty",
+    "CaseTransaction",
     "Citation",
     "Evidence",
     "HumanGate",
