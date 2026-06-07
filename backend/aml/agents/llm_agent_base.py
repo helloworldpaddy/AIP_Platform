@@ -21,6 +21,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from google.adk.agents import LlmAgent
+
 from agents.rag_agent.config.settings import get_settings
 
 from ..models.enums import AgentName
@@ -37,18 +39,37 @@ from .tools import adk_tools_named
 log = logging.getLogger(__name__)
 
 
+def _agent_model_name(agent: LlmAgent) -> str:
+    """Best-effort string model name from a built ``LlmAgent`` (the model may be
+    a plain string or a ``BaseLlm`` instance depending on how it was created)."""
+    model = getattr(agent, "model", None)
+    if isinstance(model, str):
+        return model
+    return getattr(model, "model", str(model))
+
+
 class LlmDrivenAgent(BaseAgent):
     instruction: str = ""
     tool_names: list[str] = []
     requires_review: bool = True
     temperature: float = 0.1
+    #: Canonical ADK agent supplied by the stage package
+    #: (``backend.aml.agents.stages.<stage>.agent.root_agent``).  When set, it is
+    #: the single source of truth and is reused as-is.  Left ``None`` for
+    #: ad-hoc / test agents, which build one from the class attributes below.
+    root_agent: LlmAgent | None = None
 
     def __init__(self, model: str | None = None) -> None:
-        # If no override given, take the platform-wide default from settings.
-        self.model_name = model or get_settings().gemini.generation_model
-        # Build the ADK agent eagerly — its declarations / tool schema are
-        # static across cases; only the user prompt and per-call context
+        # Reuse the canonical stage ``root_agent`` (single source of truth) when
+        # provided and no explicit model override was requested.
+        if self.root_agent is not None and model is None:
+            self._adk_agent = self.root_agent
+            self.model_name = _agent_model_name(self.root_agent)
+            return
+        # Otherwise build the ADK agent eagerly — its declarations / tool schema
+        # are static across cases; only the user prompt and per-call context
         # change between invocations.
+        self.model_name = model or get_settings().gemini.generation_model
         self._adk_agent = build_llm_agent(
             name=self.name.value.lower(),
             instruction=self.instruction,

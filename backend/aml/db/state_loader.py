@@ -87,6 +87,11 @@ async def load_investigation_state(
     except asyncpg.exceptions.UndefinedTableError:
         case_transactions = []
 
+    try:
+        swift_messages = await repos.services_swift.list_messages_for_case(case_id)
+    except asyncpg.exceptions.UndefinedTableError:
+        swift_messages = []
+
     progress = [
         _progress_for(stage, agent, agent_runs, gates)
         for stage, agent in _STAGE_AGENT.items()
@@ -102,4 +107,5 @@ async def load_investigation_state(
         narratives=narratives,
         progress=progress,
         case_transactions=case_transactions,
+        swift_messages=swift_messages,
     )

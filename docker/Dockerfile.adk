@@ -1,0 +1,60 @@
+# syntax=docker/dockerfile:1.7
+#
+# Cloud Run image for the deployable ADK agent server
+# (backend.aml.agents.fast_api_app) — serves the AML investigation stage agents
+# via ADK's get_fast_api_app (dev UI + REST). Generated from the agents-cli
+# `adk` Cloud Run template and adapted to this monorepo.
+#
+# The production analyst API uses docker/Dockerfile.backend instead.
+
+# ---- builder ----------------------------------------------------------------
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        curl \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt ./
+RUN python -m venv /opt/venv \
+ && /opt/venv/bin/pip install --upgrade pip \
+ && /opt/venv/bin/pip install -r requirements.txt
+
+# ---- runtime ----------------------------------------------------------------
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH=/app \
+    PORT=8080
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        libpq5 \
+        curl \
+        tini \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --system --create-home --uid 1000 aml
+
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+COPY --chown=aml:aml backend ./backend
+COPY --chown=aml:aml agents ./agents
+COPY --chown=aml:aml config.yaml ./config.yaml
+
+USER aml
+EXPOSE 8080
+
+# Cloud Run sets $PORT; default to 8080 locally.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["sh", "-c", "uvicorn backend.aml.agents.fast_api_app:app --host 0.0.0.0 --port ${PORT:-8080} --proxy-headers --forwarded-allow-ips '*'"]

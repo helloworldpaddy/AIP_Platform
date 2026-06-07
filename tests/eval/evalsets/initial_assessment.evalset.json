@@ -1,0 +1,32 @@
+{
+  "eval_set_id": "initial_assessment_eval",
+  "name": "Initial Assessment — starter",
+  "description": "Starter cases for AML stage 1 (alert triage + policy RAG). In eval the tools run as standalone stubs; scoring focuses on response quality + schema.",
+  "eval_cases": [
+    {
+      "eval_id": "structuring_alert",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [
+              {
+                "text": "Case: AML-EVAL-001\nSubject: Acme Trading Ltd (id=party.acme.001)\nAlert type: TRANSACTION_MONITORING\nPriority: HIGH\n\nAlert payload:\n```json\n{\"rule_id\": \"TM-STRUCT-002\", \"narrative\": \"Multiple cash deposits each just under USD 10,000 across five business days\", \"aggregate_usd\": 47000}\n```\n\nProduce the Initial Assessment. Follow your system rules: emit the Reasoning: block, then exactly one ```json fenced block matching the schema in your instructions."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              { "name": "policy_rag_search", "args": {} },
+              { "name": "record_evidence", "args": {} }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "initial_assessment",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    }
+  ]
+}

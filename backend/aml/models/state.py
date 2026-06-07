@@ -16,7 +16,7 @@ re-hydrates the state for the next stage.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -282,6 +282,82 @@ class CaseTransaction(BaseModel):
     narrative: str | None = None
 
 
+class SwiftParticipant(BaseModel):
+    """One actor in a SWIFT payment chain (party or institution)."""
+
+    model_config = ConfigDict(from_attributes=True, extra="ignore")
+
+    id: UUID
+    swift_message_id: UUID
+    sequence_order: int
+    role: str
+    entity_kind: str
+    name: str
+    external_party_id: str | None = None
+    account_number: str | None = None
+    iban: str | None = None
+    bic: str | None = None
+    lei: str | None = None
+    address_line1: str | None = None
+    address_line2: str | None = None
+    address_line3: str | None = None
+    city: str | None = None
+    region: str | None = None
+    postal_code: str | None = None
+    country_code: str | None = None
+    swift_field_tag: str | None = None
+
+
+class SwiftPaymentLeg(BaseModel):
+    """Directed hop between two SWIFT participants."""
+
+    model_config = ConfigDict(from_attributes=True, extra="ignore")
+
+    id: UUID
+    swift_message_id: UUID
+    leg_index: int
+    from_participant_id: UUID
+    to_participant_id: UUID
+    leg_kind: str
+    relationship_label: str = "FUNDS_FLOW"
+    amount: Decimal | None = None
+    currency: str | None = None
+    notes: str | None = None
+
+
+class SwiftMessage(BaseModel):
+    """Full SWIFT message with ordered participants and payment legs."""
+
+    model_config = ConfigDict(from_attributes=True, extra="ignore")
+
+    id: UUID
+    case_id: UUID
+    external_message_id: str
+    message_type: str
+    direction: str
+    uetr: UUID | None = None
+    sender_reference: str | None = None
+    end_to_end_id: str | None = None
+    transaction_reference: str | None = None
+    value_date: date | None = None
+    booked_at: datetime
+    instructed_amount: Decimal
+    instructed_currency: str
+    settlement_amount: Decimal | None = None
+    settlement_currency: str | None = None
+    exchange_rate: Decimal | None = None
+    charge_bearer: str | None = None
+    remittance_information: str | None = None
+    sender_to_receiver_info: str | None = None
+    regulatory_reporting: dict[str, Any] = Field(default_factory=dict)
+    case_transaction_id: UUID | None = None
+    related_cover_message_id: UUID | None = None
+    source_system: str = "SWIFT_GATEWAY"
+    scenario_codes: list[str] = Field(default_factory=list)
+    participants: list[SwiftParticipant] = Field(default_factory=list)
+    legs: list[SwiftPaymentLeg] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Aggregate: stage progress + InvestigationState
 # ---------------------------------------------------------------------------
@@ -321,6 +397,7 @@ class InvestigationState(BaseModel):
     narratives: list[Narrative] = Field(default_factory=list)
     progress: list[StageProgress] = Field(default_factory=list)
     case_transactions: list[CaseTransaction] = Field(default_factory=list)
+    swift_messages: list[SwiftMessage] = Field(default_factory=list)
 
     # Convenience read-only helpers --------------------------------------------
 

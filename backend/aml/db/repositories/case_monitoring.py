@@ -137,8 +137,24 @@ class CaseMonitoringRepository:
             """
             INSERT INTO case_transaction_scenario_links (transaction_id, scenario_id, link_role)
             VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
             """,
             transaction_id,
             scenario_id,
             link_role,
         )
+
+    async def find_scenario_id(
+        self, case_id: UUID, scenario_code: str
+    ) -> UUID | None:
+        row = await self._conn.fetchrow(
+            """
+            SELECT id FROM case_scenarios
+             WHERE case_id = $1 AND scenario_code = $2
+             ORDER BY created_at DESC
+             LIMIT 1
+            """,
+            case_id,
+            scenario_code,
+        )
+        return UUID(str(row["id"])) if row else None

@@ -12,8 +12,9 @@ The platform is built on:
 - **PostgreSQL 16 + pgvector** — system of record for cases, evidence, audit
   trail, parties, narratives, and the policy/RAG corpus
 - **Neo4j 5** — counterparty graph (transactions, ownership, relationships)
-- **Google Gemini** — agent reasoning + function-calling, plus
-  `text-embedding-004` for the policy RAG layer
+- **Google ADK + Gemini** — agents built on the Agent Development Kit
+  (`adk web`, `adk eval`, `get_fast_api_app`); Gemini for reasoning +
+  function-calling, plus `text-embedding-004` for the policy RAG layer
 - **React + Vite + TypeScript** — analyst console (case detail, gates,
   narrative editor, audit trail)
 - **Pydantic v2** for strict domain modelling, **Alembic-style** raw SQL
@@ -110,20 +111,32 @@ backend/aml/
             audit.py            # GET /cases/{id}/audit, /audit/verify
         schemas.py              # request/response Pydantic models
         errors.py               # exception → HTTP mappers
-    agents/
+    agents/                     # ADK agents (single source of truth)
         base.py                 # AgentResult, BaseAgent contract
-        llm_agent_base.py       # Gemini function-calling mixin
-        gemini_runner.py        # tool dispatch loop + reasoning log
-        registry.py             # production agent factory
+        llm_agent_base.py       # LlmDrivenAgent: reuses each stage's root_agent
+        adk_runner.py           # build_llm_agent + tool-dispatch / reasoning log
+        adk_config.py           # ADK runtime config helpers
+        context.py              # AgentToolContext (contextvar bound per run)
+        registry.py             # production agent factory (build_default_agents)
         prompts.py              # system prompts + JSON output schemas
-        initial_assessment.py
+        initial_assessment.py   # orchestrator wrapper -> stages/initial_assessment
         transaction_enrichment.py
         due_diligence.py
         case_analysis.py
+        fast_api_app.py         # deployable ADK server (get_fast_api_app)
+        stages/                 # canonical root_agent per stage (adk web / eval)
+            initial_assessment/agent.py     # root_agent
+            transaction_enrichment/agent.py # root_agent
+            due_diligence/agent.py          # root_agent
+            case_analysis/agent.py          # root_agent
+            rag_agent/agent.py              # root_agent (re-export of agents/rag_agent)
         tools/
+            context_aware.py    # ONE tool set: real DB ops when context bound,
+                                # safe stubs for standalone adk web / eval
             policy_tool.py      # policy_rag_search (live, pgvector)
             data_tools.py       # kyc / graph / search PROTOCOLS (stub by default)
-            evidence_tool.py    # record_evidence
+            recorder_tools.py   # record_evidence / record_party
+            registry.py         # ADK_TOOLS + adk_tools_named()
     db/
         client.py               # asyncpg pool + connection-scoped repositories
         schema.sql              # 11-table AML schema with triggers
@@ -150,7 +163,8 @@ frontend/src/
 
 docker/
     docker-compose.yml          # postgres + neo4j + backend + frontend
-    Dockerfile.backend
+    Dockerfile.backend          # FastAPI orchestrator (analyst API)
+    Dockerfile.adk              # deployable ADK agent server (Cloud Run)
     Dockerfile.frontend
     init-db/                    # 01-rag-schema.sh, 02-aml-schema.sh
     init-neo4j/01-constraints.cypher
@@ -165,6 +179,10 @@ tests/aml/
     stubs.py                    # deterministic stub agents (no LLM)
     test_orchestrator_walkthrough.py
     test_api_walkthrough.py
+tests/eval/                     # ADK evaluation (per stage)
+    eval_config.json            # rubric-based judge criteria
+    evalsets/*.evalset.json     # starter cases per stage
+    README.md
 ```
 
 ---
@@ -253,6 +271,70 @@ npm run dev
 
 The console expects an analyst id; pick one from the bar at the top
 (default fixtures: `analyst.demo`, `analyst.test`).
+
+---
+
+## Running the agents (Google ADK)
+
+The four AML stage agents are now consolidated into a **single source of truth**
+under `backend/aml/agents/stages/<stage>/agent.py`, each exposing a canonical
+`root_agent`. The same definitions are reused by the FastAPI orchestrator
+(`LlmDrivenAgent` subclasses) and by Google ADK tooling — there is no duplicate
+agent code.
+
+The tool layer (`backend/aml/agents/tools/context_aware.py`) is **context-aware**:
+when the orchestrator binds an `AgentToolContext` the tools perform real DB / graph
+/ provider operations; when an agent runs standalone (no context, e.g. `adk web`
+or eval) the tools return safe stubs so prompts and JSON output can be exercised
+without a live backend.
+
+### adk web (interactive debug UI)
+
+```bash
+export GOOGLE_API_KEY=...                       # or load from docker/.env
+adk web backend/aml/agents/stages --port 8000   # pick a stage in the top-left
+```
+
+Discovers `initial_assessment`, `transaction_enrichment`, `due_diligence`,
+`case_analysis`, and `rag_agent`.
+
+### Deployable ADK server (REST + dev UI, Cloud Run)
+
+`backend/aml/agents/fast_api_app.py` serves the same agents via ADK's
+`get_fast_api_app` (honours `$PORT`):
+
+```bash
+uvicorn backend.aml.agents.fast_api_app:app --host 0.0.0.0 --port 8080
+curl http://localhost:8080/list-apps
+# → ["case_analysis","due_diligence","initial_assessment","rag_agent","transaction_enrichment"]
+```
+
+Container image for deployment: **`docker/Dockerfile.adk`** (Cloud Run target).
+
+### agents-cli
+
+`pyproject.toml` carries `[tool.agents-cli]` (agent_directory =
+`backend/aml/agents/stages`), so `agents-cli info` recognizes the project.
+Because the stages are a *nested* multi-agent set, query a running ADK server
+rather than `agents-cli run` local mode:
+
+```bash
+agents-cli run "<prompt>" --url http://localhost:8080 --mode adk --app-name due_diligence
+```
+
+### Evaluation
+
+Starter evalsets live in `tests/eval/`. Run per stage (see
+[tests/eval/README.md](tests/eval/README.md)):
+
+```bash
+adk eval backend/aml/agents/stages/due_diligence \
+  tests/eval/evalsets/due_diligence.evalset.json \
+  --config_file_path tests/eval/eval_config.json
+```
+
+Requires `google-adk[eval]`. Scoring uses a rubric-based judge
+(`rubric_based_final_response_quality_v1`) that needs no reference answers.
 
 ---
 
@@ -356,7 +438,7 @@ vars override `config.yaml`.
 | Setting                | Default              | Description                          |
 |------------------------|----------------------|--------------------------------------|
 | `embedding_model`      | `text-embedding-004` | Gemini embedding model               |
-| `generation_model`     | `gemini-2.0-flash`   | Gemini chat model                    |
+| `generation_model`     | `gemini-2.5-flash`   | Gemini chat model                    |
 | `embedding_dim`        | `768`                | Must match the embedding model       |
 | `chunk_size`           | `800`                | Tokens per chunk                     |
 | `chunk_overlap`        | `100`                | Overlap tokens                       |

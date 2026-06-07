@@ -9,6 +9,11 @@ re-used outside an LLM context).  Two parallel registrations exist:
   `google.adk.agents.LlmAgent`.  ADK derives its function declaration from
   the callable's signature + docstring.
 
+`ADK_TOOLS` is built from the **context-aware** wrappers in
+`context_aware.py`: when the orchestrator binds an `AgentToolContext` they run
+the real implementations (DB writes + provider calls); standalone (`adk web`)
+they return safe stubs.  This is the single tool set used by both surfaces.
+
 Per-call context (case_id, agent_run_id, repos) is delivered through the
 `agents.context` contextvar — set by the orchestrator before each agent
 invocation, read inside the tool.
@@ -18,18 +23,19 @@ from __future__ import annotations
 
 from google.adk.tools import FunctionTool
 
+from . import context_aware
 from .data_tools import external_search, kyc_lookup, neo4j_hop_traversal
 from .policy_tool import policy_rag_search
 from .recorder_tools import record_evidence, record_party
 from .registry import ToolFn, all_tools
 
 ADK_TOOLS: dict[str, FunctionTool] = {
-    "policy_rag_search": FunctionTool(func=policy_rag_search),
-    "kyc_lookup": FunctionTool(func=kyc_lookup),
-    "neo4j_hop_traversal": FunctionTool(func=neo4j_hop_traversal),
-    "external_search": FunctionTool(func=external_search),
-    "record_evidence": FunctionTool(func=record_evidence),
-    "record_party": FunctionTool(func=record_party),
+    "policy_rag_search": FunctionTool(func=context_aware.policy_rag_search),
+    "kyc_lookup": FunctionTool(func=context_aware.kyc_lookup),
+    "neo4j_hop_traversal": FunctionTool(func=context_aware.neo4j_hop_traversal),
+    "external_search": FunctionTool(func=context_aware.external_search),
+    "record_evidence": FunctionTool(func=context_aware.record_evidence),
+    "record_party": FunctionTool(func=context_aware.record_party),
 }
 
 

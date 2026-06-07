@@ -11,19 +11,52 @@ import json
 import logging
 from typing import Any
 
+from pydantic import ValidationError
+
 from .base import AgentContext, AgentResult
 from .llm_agent_base import LlmDrivenAgent
 from .prompts import CASE_ANALYSIS_INSTRUCTION
+from .stages.case_analysis.agent import TOOL_NAMES, root_agent as _root_agent
 from ..models.enums import AgentName, Classification
 from ..models.state import Citation
 
 log = logging.getLogger(__name__)
 
 
+def _coerce_citations(raw: Any) -> list[Citation]:
+    """Validate citations tolerantly.
+
+    The model sometimes cites a label (e.g. "Due Diligence Findings") instead of
+    an evidence UUID, or omits ``footnote``. A single bad entry must not discard
+    the whole narrative — keep the valid citations and drop the rest with a
+    warning so the analyst still gets a reviewable draft.
+    """
+    if not isinstance(raw, list):
+        return []
+    valid: list[Citation] = []
+    skipped: list[Any] = []
+    for c in raw:
+        try:
+            valid.append(Citation.model_validate(c))
+        except (ValidationError, ValueError, TypeError):
+            skipped.append(
+                c.get("evidence_id") if isinstance(c, dict) else c
+            )
+    if skipped:
+        log.warning(
+            "case_analysis.citations.dropped count=%d kept=%d values=%s",
+            len(skipped),
+            len(valid),
+            skipped,
+        )
+    return valid
+
+
 class CaseAnalysisAgent(LlmDrivenAgent):
     name = AgentName.CASE_ANALYSIS
     instruction = CASE_ANALYSIS_INSTRUCTION
-    tool_names = ["record_evidence"]  # may add new evidence to anchor narrative
+    tool_names = TOOL_NAMES  # may add new evidence to anchor narrative
+    root_agent = _root_agent
 
     def build_user_prompt(self, ctx: AgentContext) -> str:
         case = ctx.state.case
@@ -69,7 +102,7 @@ class CaseAnalysisAgent(LlmDrivenAgent):
         # without an extra round-trip.
         try:
             classification = Classification(out["classification"])
-            citations = [Citation.model_validate(c) for c in out.get("citations", [])]
+            citations = _coerce_citations(out.get("citations", []))
             narrative = await ctx.repos.narratives.create(
                 case_id=ctx.state.case.id,
                 classification=classification,

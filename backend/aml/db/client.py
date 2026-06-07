@@ -39,6 +39,7 @@ from .repositories import (
     EvidenceRepository,
     HumanGatesRepository,
     NarrativesRepository,
+    ServicesSwiftRepository,
 )
 
 log = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ class AmlRepositories:
         "gates",
         "narratives",
         "audit",
+        "services_swift",
     )
 
     def __init__(self, conn: asyncpg.Connection) -> None:
@@ -73,6 +75,7 @@ class AmlRepositories:
         self.gates = HumanGatesRepository(conn)
         self.narratives = NarrativesRepository(conn)
         self.audit = AuditRepository(conn)
+        self.services_swift = ServicesSwiftRepository(conn)
 
     @property
     def connection(self) -> asyncpg.Connection:

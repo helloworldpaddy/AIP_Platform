@@ -14,6 +14,8 @@ from .gates import HumanGatesRepository
 from .narratives import NarrativesRepository
 from .parties import CasePartiesRepository
 
+from .services_swift import ServicesSwiftRepository
+
 __all__ = [
     "AgentRunsRepository",
     "AuditRepository",
@@ -23,4 +25,5 @@ __all__ = [
     "HumanGatesRepository",
     "NarrativesRepository",
     "CasePartiesRepository",
+    "ServicesSwiftRepository",
 ]

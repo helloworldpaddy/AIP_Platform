@@ -10,6 +10,7 @@ pgvector>=0.3.0
 neo4j>=5.20.0
 
 # Config + validation
+eval-type-backport>=0.2.0; python_version < "3.10"
 pydantic>=2.6.0
 pydantic-settings>=2.2.0
 PyYAML>=6.0.1

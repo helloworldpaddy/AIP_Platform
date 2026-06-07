@@ -1,0 +1,31 @@
+{
+  "eval_set_id": "transaction_enrichment_eval",
+  "name": "Transaction Enrichment — starter",
+  "description": "Starter case for AML stage 2 (graph hops + party recording). Tools run as standalone stubs in eval.",
+  "eval_cases": [
+    {
+      "eval_id": "hop_traversal",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [
+              {
+                "text": "Case: AML-EVAL-001\nSubject: Acme Trading Ltd (id=party.acme.001)\nAlert type: TRANSACTION_MONITORING\n\nInitial Assessment output (use it to scope your search):\n```json\n{\"scenario_type\": \"STRUCTURING\", \"risk_band\": \"HIGH\", \"hypothesis\": \"Subject is layering structured cash deposits through related counter-parties.\"}\n```\n\nRun hop-1 then hop-2 graph traversals. Record every retrieved neighbor as evidence (GRAPH_RELATION) and persist each unique party with record_party. Conclude with the strict JSON schema."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              { "name": "neo4j_hop_traversal", "args": {} }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "transaction_enrichment",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    }
+  ]
+}

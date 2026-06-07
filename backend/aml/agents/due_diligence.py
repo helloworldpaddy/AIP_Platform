@@ -13,6 +13,7 @@ import json
 from .base import AgentContext, AgentResult
 from .llm_agent_base import LlmDrivenAgent
 from .prompts import DUE_DILIGENCE_INSTRUCTION
+from .stages.due_diligence.agent import TOOL_NAMES, root_agent as _root_agent
 from ..models.enums import AgentName
 from ..models.state import TokenUsage
 
@@ -20,7 +21,8 @@ from ..models.state import TokenUsage
 class DueDiligenceAgent(LlmDrivenAgent):
     name = AgentName.DUE_DILIGENCE
     instruction = DUE_DILIGENCE_INSTRUCTION
-    tool_names = ["kyc_lookup", "external_search", "record_evidence"]
+    tool_names = TOOL_NAMES
+    root_agent = _root_agent
 
     async def run(self, ctx: AgentContext) -> AgentResult:
         unverified = [p for p in ctx.state.parties if not p.verified]

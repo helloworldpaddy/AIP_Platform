@@ -1,0 +1,26 @@
+{
+  "eval_set_id": "case_analysis_eval",
+  "name": "Case Analysis — starter",
+  "description": "Starter case for AML stage 4 (classification + narrative). Tools run as standalone stubs in eval.",
+  "eval_cases": [
+    {
+      "eval_id": "classify_and_narrate",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [
+              {
+                "text": "Case: AML-EVAL-001\nSubject: Acme Trading Ltd (id=party.acme.001)\nAlert type: TRANSACTION_MONITORING\n\nINITIAL ASSESSMENT:\n```json\n{\"scenario_type\": \"STRUCTURING\", \"risk_band\": \"HIGH\", \"hypothesis\": \"Structured cash deposits layered via Northwind Holdings.\"}\n```\n\nDUE DILIGENCE:\n```json\n{\"overall_risk_score\": 0.78, \"key_findings\": [\"Beneficiary Northwind Holdings shares an address with two shell entities\"]}\n```\n\nAVAILABLE EVIDENCE (use these IDs in your citations):\n```json\n[{\"evidence_id\": \"22222222-2222-4222-8222-222222222222\", \"type\": \"KYC_RECORD\", \"title\": \"KYC — Northwind Holdings\"}]\n```\n\nRender the final classification, narrative, and citations per the schema in your instructions."
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "case_analysis",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    }
+  ]
+}

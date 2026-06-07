@@ -12,17 +12,15 @@ from typing import Any
 from .base import AgentContext, GateSpec
 from .llm_agent_base import LlmDrivenAgent
 from .prompts import TRANSACTION_ENRICHMENT_INSTRUCTION
+from .stages.transaction_enrichment.agent import TOOL_NAMES, root_agent as _root_agent
 from ..models.enums import AgentName
 
 
 class TransactionEnrichmentAgent(LlmDrivenAgent):
     name = AgentName.TRANSACTION_ENRICHMENT
     instruction = TRANSACTION_ENRICHMENT_INSTRUCTION
-    tool_names = [
-        "neo4j_hop_traversal",
-        "record_evidence",
-        "record_party",
-    ]
+    tool_names = TOOL_NAMES
+    root_agent = _root_agent
 
     def build_user_prompt(self, ctx: AgentContext) -> str:
         case = ctx.state.case

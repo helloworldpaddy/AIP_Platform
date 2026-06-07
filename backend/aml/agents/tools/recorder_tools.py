@@ -172,6 +172,24 @@ async def record_party(
             risk_indicators = v if isinstance(v, dict) else {"value": v}
         except Exception as err:  # noqa: BLE001
             return {"error": f"risk_indicators_json must be valid JSON: {err}"}
+
+    # The model frequently passes non-UUID strings here (party/transaction
+    # external ids, or hallucinated values). Coerce tolerantly: keep valid
+    # evidence UUIDs, drop the rest with a warning instead of crashing the run.
+    evidence_uuids: list[UUID] = []
+    skipped: list[str] = []
+    for e in source_evidence_ids or []:
+        try:
+            evidence_uuids.append(UUID(str(e)))
+        except (ValueError, AttributeError, TypeError):
+            skipped.append(str(e))
+    if skipped:
+        log.warning(
+            "record_party.skipped_invalid_evidence_ids count=%d values=%s",
+            len(skipped),
+            skipped,
+        )
+
     async with ctx.db_lock:
         party = await ctx.repos.parties.upsert(
             case_id=ctx.case_id,
@@ -181,13 +199,20 @@ async def record_party(
             relationship=relationship,
             hop_distance=int(hop_distance),
             risk_indicators=risk_indicators,
-            source_evidence_ids=[UUID(e) for e in (source_evidence_ids or [])],
+            source_evidence_ids=evidence_uuids,
         )
-    return {
+    result: dict[str, Any] = {
         "party_id": str(party.id),
         "party_external_id": party.party_external_id,
         "verified": party.verified,
     }
+    if skipped:
+        result["ignored_source_evidence_ids"] = skipped
+        result["note"] = (
+            "Some source_evidence_ids were not valid evidence UUIDs and were "
+            "ignored. Pass only evidence_id values returned by record_evidence."
+        )
+    return result
 
 
 RECORD_PARTY_SPEC = register_tool(

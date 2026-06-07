@@ -16,6 +16,7 @@ Usage:
     python scripts/aml_seed.py --preset mrp-goods
     python scripts/aml_seed.py --preset retail --skip-policies
     python scripts/aml_seed.py --preset cards --skip-policies
+    python scripts/aml_seed.py --preset services-swift --skip-policies
 """
 
 from __future__ import annotations
@@ -95,6 +96,7 @@ class _SeedPreset:
     scenario: _ScenarioSeed | None = None
     transactions: tuple[_TxnSeed, ...] = ()
     scenario_bundles: tuple[_ScenarioTxnBundle, ...] | None = None
+    services_swift_messages: bool = False
 
 
 _PRESETS: dict[str, _SeedPreset] = {
@@ -526,6 +528,187 @@ _PRESETS: dict[str, _SeedPreset] = {
             ),
         ),
     ),
+    "services-swift": _SeedPreset(
+        case_number="AML-SERVICES-SWIFT-2026-001",
+        subject_party_id="party.services.swift.demo.001",
+        subject_party_name="Northwind Trade Services GmbH",
+        alert_type="TRANSACTION_MONITORING",
+        alert_payload={
+            "rule_id": "TM-COMM-SWIFT-011",
+            "channel": "swift_wire",
+            "line_of_business": "SERVICES",
+            "message_types": ["MT103", "MT202", "MT202COV"],
+            "message_count_by_type": {"MT103": 3, "MT202": 1, "MT202COV": 1},
+            "alerted_scenarios": [
+                "TM-COMM-SWIFT-011",
+                "TM-COMM-SWIFT-012",
+                "TM-COMM-SWIFT-013",
+            ],
+            "intermediary_bic": "CHASUS33XXX",
+            "beneficiary_party_count": 3,
+            "aggregate_usd_equiv": 1_180_000,
+            "corridors": ["DE", "SG", "AE"],
+            "narrative": (
+                "Services LOB TM alert: multiple SWIFT message types on one "
+                "relationship — MT103 customer credits, MT202 institution "
+                "settlement, and MT202COV cover — sharing correspondent "
+                "CHASUS33XXX across unrelated beneficiaries within 10 business days."
+            ),
+        },
+        priority=CasePriority.HIGH,
+        line_of_business=LineOfBusiness.SERVICES,
+        evidence_title="TM alert — commercial SWIFT (intermediary + multi-beneficiary)",
+        evidence_content=(
+            "Seeded Services LOB case: multiple SWIFT MT103 customer payments, "
+            "an MT202 institution settlement, and an MT202COV cover message — "
+            "each linked to one or more transaction-monitoring scenarios "
+            "(shared intermediary, cover sequencing, institution chain)."
+        ),
+        scenario=None,
+        transactions=(),
+        scenario_bundles=(
+            _ScenarioTxnBundle(
+                scenario=_ScenarioSeed(
+                    scenario_code="TM-COMM-SWIFT-011",
+                    title="Commercial SWIFT — single intermediary, multiple beneficiaries",
+                    trigger_summary=(
+                        "Repeated use of the same intermediary BIC for unrelated "
+                        "cross-border beneficiaries within a short monitoring window"
+                    ),
+                    trigger_facts={
+                        "window_business_days": 10,
+                        "intermediary_bic": "CHASUS33XXX",
+                        "distinct_beneficiary_bics": 3,
+                        "message_types": ["MT103"],
+                    },
+                ),
+                transactions=(
+                    _TxnSeed(
+                        external_transaction_id="SVC-SWIFT-TXN-001",
+                        booked_offset_hours=-8,
+                        amount="425000.0000",
+                        currency="EUR",
+                        direction="DEBIT",
+                        payment_channel="WIRE",
+                        product_category="COMMERCIAL",
+                        counterparty_name="Rhein Components AG",
+                        counterparty_external_id="cp.de.rhein.01",
+                        counterparty_country="DE",
+                        channel_details={
+                            "swift": {
+                                "message_type": "MT103",
+                                "reference": "SWF-2026-0412-DE-01",
+                                "uetr": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                                "ordering_customer": "Northwind Trade Services GmbH",
+                                "ordering_institution_bic": "COBADEFFXXX",
+                                "senders_correspondent_bic": "COBADEFFXXX",
+                                "intermediary_institution_bic": "CHASUS33XXX",
+                                "account_with_institution_bic": "DEUTDEFFXXX",
+                                "beneficiary_customer": "Rhein Components AG",
+                                "beneficiary_bic": "DEUTDEFFXXX",
+                                "remittance_info": "INV-NW-8841 / goods settlement",
+                            }
+                        },
+                        narrative=(
+                            "MT103 single-creditor payment; intermediary CHASUS33XXX; "
+                            "ultimate beneficiary Rhein Components AG (DE)."
+                        ),
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="SVC-SWIFT-TXN-002",
+                        booked_offset_hours=-72,
+                        amount="510000.0000",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="WIRE",
+                        product_category="COMMERCIAL",
+                        counterparty_name="Harbour Logistics Pte Ltd",
+                        counterparty_external_id="cp.sg.harb.02",
+                        counterparty_country="SG",
+                        channel_details={
+                            "swift": {
+                                "message_type": "MT103",
+                                "reference": "SWF-2026-0408-SG-02",
+                                "uetr": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+                                "ordering_customer": "Northwind Trade Services GmbH",
+                                "ordering_institution_bic": "COBADEFFXXX",
+                                "intermediary_institution_bic": "CHASUS33XXX",
+                                "account_with_institution_bic": "DBSSSGSGXXX",
+                                "beneficiary_customer": "Harbour Logistics Pte Ltd",
+                                "beneficiary_bic": "DBSSSGSGXXX",
+                                "remittance_info": "FREIGHT Q1 / SGSVC-2291",
+                            }
+                        },
+                        narrative=(
+                            "MT103; same intermediary CHASUS33XXX; beneficiary Harbour "
+                            "Logistics Pte Ltd (SG)."
+                        ),
+                    ),
+                    _TxnSeed(
+                        external_transaction_id="SVC-SWIFT-TXN-003",
+                        booked_offset_hours=-168,
+                        amount="245000.0000",
+                        currency="USD",
+                        direction="DEBIT",
+                        payment_channel="WIRE",
+                        product_category="COMMERCIAL",
+                        counterparty_name="Gulf Procurement LLC",
+                        counterparty_external_id="cp.ae.gulf.03",
+                        counterparty_country="AE",
+                        channel_details={
+                            "swift": {
+                                "message_type": "MT103",
+                                "reference": "SWF-2026-0401-AE-03",
+                                "uetr": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+                                "ordering_customer": "Northwind Trade Services GmbH",
+                                "ordering_institution_bic": "COBADEFFXXX",
+                                "intermediary_institution_bic": "CHASUS33XXX",
+                                "account_with_institution_bic": "NBADAEAAXXX",
+                                "beneficiary_customer": "Gulf Procurement LLC",
+                                "beneficiary_bic": "NBADAEAAXXX",
+                                "remittance_info": "CONSULTING RETAINER / SOW-2026-03",
+                            }
+                        },
+                        narrative=(
+                            "MT103; same intermediary CHASUS33XXX; beneficiary Gulf "
+                            "Procurement LLC (AE)."
+                        ),
+                    ),
+                ),
+            ),
+            _ScenarioTxnBundle(
+                scenario=_ScenarioSeed(
+                    scenario_code="TM-COMM-SWIFT-012",
+                    title="SWIFT cover — MT202COV paired with customer credit",
+                    trigger_summary=(
+                        "MT202COV cover message references MT103; sequencing and "
+                        "amount alignment under review"
+                    ),
+                    trigger_facts={
+                        "message_types": ["MT202COV", "MT103"],
+                        "cover_pair_required": True,
+                    },
+                ),
+                transactions=(),
+            ),
+            _ScenarioTxnBundle(
+                scenario=_ScenarioSeed(
+                    scenario_code="TM-COMM-SWIFT-013",
+                    title="Institution chain — MT202 settlement",
+                    trigger_summary=(
+                        "MT202 general financial institution transfer on same "
+                        "corridor as customer credits; institution-to-institution hops"
+                    ),
+                    trigger_facts={
+                        "message_types": ["MT202"],
+                        "corridor": "SG",
+                    },
+                ),
+                transactions=(),
+            ),
+        ),
+        services_swift_messages=True,
+    ),
 }
 
 
@@ -691,6 +874,26 @@ async def _maybe_sync_neo4j(
         log.warning("seed.neo4j.sync.failed err=%s", err)
 
 
+async def _maybe_seed_services_swift(
+    repos: AmlRepositories,
+    case_id: UUID,
+    preset: _SeedPreset,
+    log: logging.Logger,
+) -> None:
+    if not preset.services_swift_messages:
+        return
+    from scripts.seed_services_swift import seed_swift_messages  # noqa: E402
+    from scripts.services_swift_seed_data import services_swift_demo_messages  # noqa: E402
+
+    try:
+        n = await seed_swift_messages(
+            repos, case_id, services_swift_demo_messages(), log
+        )
+        log.info("seed.services_swift.done case_id=%s inserted=%d", case_id, n)
+    except Exception as err:
+        log.warning("seed.services_swift.failed err=%s", err)
+
+
 async def _seed_case(preset: _SeedPreset, log: logging.Logger) -> str:
     db = get_aml_db_client()
     await db.connect()
@@ -702,6 +905,7 @@ async def _seed_case(preset: _SeedPreset, log: logging.Logger) -> str:
                 preset.case_number,
                 existing.id,
             )
+            await _maybe_seed_services_swift(repos, existing.id, preset, log)
             return str(existing.id)
 
         case = await repos.cases.create(
@@ -747,6 +951,7 @@ async def _seed_case(preset: _SeedPreset, log: logging.Logger) -> str:
         )
 
         await _seed_case_monitoring(repos, case.id, preset, log)
+        await _maybe_seed_services_swift(repos, case.id, preset, log)
 
     log.info("seed.case.created case_number=%s id=%s", case.case_number, case.id)
     await _maybe_sync_neo4j(
@@ -799,6 +1004,7 @@ async def main() -> None:
             scenario=preset.scenario,
             transactions=preset.transactions,
             scenario_bundles=preset.scenario_bundles,
+            services_swift_messages=preset.services_swift_messages,
         )
 
     case_id: str | None = None

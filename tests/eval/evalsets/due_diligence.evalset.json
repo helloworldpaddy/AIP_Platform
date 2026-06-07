@@ -1,0 +1,32 @@
+{
+  "eval_set_id": "due_diligence_eval",
+  "name": "Due Diligence — starter",
+  "description": "Starter case for AML stage 3 (KYC + external search + risk scoring). Tools run as standalone stubs in eval.",
+  "eval_cases": [
+    {
+      "eval_id": "kyc_and_search",
+      "conversation": [
+        {
+          "user_content": {
+            "parts": [
+              {
+                "text": "Case: AML-EVAL-001\nSubject: Acme Trading Ltd (id=party.acme.001)\n\nInitial Assessment summary:\n```json\n{\"scenario_type\": \"STRUCTURING\", \"risk_band\": \"HIGH\"}\n```\n\nVerified parties to investigate:\n```json\n[{\"party_id\": \"11111111-1111-4111-8111-111111111111\", \"party_external_id\": \"party.beneficiary.001\", \"party_name\": \"Northwind Holdings\", \"party_type\": \"CORPORATE\", \"hop_distance\": 1, \"relationship\": \"wire_to\", \"risk_indicators\": {}}]\n```\n\nRun KYC lookup + external search per party. Record each result as evidence with the appropriate type. Output strict JSON per the schema."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              { "name": "kyc_lookup", "args": {} },
+              { "name": "external_search", "args": {} }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "due_diligence",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    }
+  ]
+}

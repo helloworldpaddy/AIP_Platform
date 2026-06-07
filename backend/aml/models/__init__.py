@@ -31,6 +31,9 @@ from .state import (
     InvestigationState,
     Narrative,
     StageProgress,
+    SwiftMessage,
+    SwiftParticipant,
+    SwiftPaymentLeg,
 )
 
 __all__ = [
@@ -59,4 +62,7 @@ __all__ = [
     "InvestigationState",
     "Narrative",
     "StageProgress",
+    "SwiftMessage",
+    "SwiftParticipant",
+    "SwiftPaymentLeg",
 ]

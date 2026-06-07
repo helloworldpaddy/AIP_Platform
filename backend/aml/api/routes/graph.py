@@ -62,6 +62,7 @@ async def get_case_graph(
         )
     }
     links: list[GraphLink] = []
+    case_party_edge_seen: set[tuple[str, str]] = set()
 
     # ---- 1. case_parties projection ---------------------------------------
     for party in state.parties:
@@ -80,6 +81,12 @@ async def get_case_graph(
         # still attach to the subject to keep the projection a tree; the
         # `hop_distance` field on the node carries the real distance for
         # the renderer to apply spacing or color.
+        pair = (subject_id, node_id)
+        if pair in case_party_edge_seen:
+            # Multiple case_party rows can reference the same external id
+            # (e.g. repeated enrichment); one subject→party edge is enough.
+            continue
+        case_party_edge_seen.add(pair)
         links.append(
             GraphLink(
                 source=subject_id,
@@ -114,29 +121,42 @@ async def get_case_graph(
 
         for n in neighbors:
             node_id = f"party:{n['party_external_id']}"
+            path_len = int(n.get("hop_distance") or neo4j_hop)
             if node_id not in nodes:
                 nodes[node_id] = GraphNode(
                     id=node_id,
                     label=n.get("party_name") or n["party_external_id"],
                     kind="party",
                     party_type=n.get("party_type"),
-                    hop_distance=int(n.get("hop_distance") or neo4j_hop),
+                    hop_distance=path_len,
                     verified=None,
                     risk_indicators=n.get("risk_flags") or {},
                 )
-            links.append(
-                GraphLink(
-                    source=subject_id,
-                    target=node_id,
-                    relationship=n.get("relationship") or "RELATED",
-                    weight=float(n.get("txn_count") or 1),
-                    metadata={
-                        "source": "neo4j",
-                        "total_value": n.get("total_value"),
-                        "currency": n.get("currency"),
-                    },
+            neo_meta = {
+                "source": "neo4j",
+                "neo4j_path_length": path_len,
+                "total_value": n.get("total_value"),
+                "currency": n.get("currency"),
+            }
+            # One edge per (subject, target): merge into an existing case_parties
+            # link so enabling Neo4j still surfaces path length / value metadata.
+            merged = False
+            for i, existing in enumerate(links):
+                if existing.source == subject_id and existing.target == node_id:
+                    merged_meta = {**existing.metadata, **neo_meta}
+                    links[i] = existing.model_copy(update={"metadata": merged_meta})
+                    merged = True
+                    break
+            if not merged:
+                links.append(
+                    GraphLink(
+                        source=subject_id,
+                        target=node_id,
+                        relationship=n.get("relationship") or "RELATED",
+                        weight=float(n.get("txn_count") or 1),
+                        metadata=neo_meta,
+                    )
                 )
-            )
         source = "hybrid" if state.parties else "neo4j"
 
     return CaseGraphResponse(

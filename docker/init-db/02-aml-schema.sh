@@ -13,3 +13,8 @@ echo "[init] applying AML case scenarios + transactions schema"
 psql --username "${POSTGRES_USER}" --dbname "${POSTGRES_DB}" \
      --no-psqlrc --set ON_ERROR_STOP=on \
      --file /sql/aml-case-scenarios-txns.sql
+
+echo "[init] applying AML services SWIFT schema"
+psql --username "${POSTGRES_USER}" --dbname "${POSTGRES_DB}" \
+     --no-psqlrc --set ON_ERROR_STOP=on \
+     --file /sql/aml-services-swift.sql

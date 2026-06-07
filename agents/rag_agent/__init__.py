@@ -13,6 +13,15 @@ if "agents" not in _sys.modules:
     _sys.modules["agents"] = _agents_pkg
 _sys.modules.setdefault("agents.rag_agent", _sys.modules[__name__])
 
-from agents.rag_agent.agent import root_agent  # noqa: E402
+
+def __getattr__(name: str):
+    """Lazy-load ADK agent so `agents.rag_agent.config.settings` (and AML DB
+    client) can import without pulling `google.adk` at package import time."""
+    if name == "root_agent":
+        from agents.rag_agent.agent import root_agent as _root_agent
+
+        return _root_agent
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = ["root_agent"]

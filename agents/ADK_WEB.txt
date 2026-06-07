@@ -1,6 +1,16 @@
 ADK Web — AML investigation agents (dev / debug only)
 ======================================================
 
+The AML stage agents now live in the backend package as a single source of
+truth shared with the FastAPI orchestrator:
+
+  backend/aml/agents/stages/
+    initial_assessment/agent.py      -> root_agent
+    transaction_enrichment/agent.py  -> root_agent
+    due_diligence/agent.py           -> root_agent
+    case_analysis/agent.py           -> root_agent
+    rag_agent/agent.py               -> root_agent (re-export of agents/rag_agent)
+
 Prerequisites
 -------------
 - Python env with `google-adk` (same as backend `requirements.txt`).
@@ -8,35 +18,64 @@ Prerequisites
 
 Run the Web UI
 --------------
-From the repository root, use the `agents/` folder as the ADK parent directory
-(the same pattern as `agents/rag_agent/`):
+From the repository root, point `adk web` at the stages directory:
 
-  cd agents
-  export GOOGLE_API_KEY=...   # or load from ../docker/.env
-  adk web --port 8000
+  export GOOGLE_API_KEY=...        # or load from docker/.env
+  adk web backend/aml/agents/stages --port 8000
 
-Open http://localhost:8000 — pick an agent in the top-left, e.g.:
+Open http://localhost:8000 and pick an agent in the top-left:
 
-  aml_initial_assessment
-  aml_transaction_enrichment
-  aml_due_diligence
-  aml_case_analysis
+  initial_assessment
+  transaction_enrichment
+  due_diligence
+  case_analysis
+  rag_agent
 
-Each folder’s `agent.py` defines `root_agent` for that workflow stage.
+Each folder's `agent.py` defines `root_agent` for that workflow stage.
 
 Behaviour vs production
 -----------------------
-These modules reuse the same prompts and tool *signatures* as the FastAPI
-orchestrator. Tools are wrapped (`backend/aml/agents/adk_web_tools.py`) so that
-when the orchestrator’s DB context is not present, stub results are returned
-(`adk_web_stub` / `adk_web_note`) instead of failing. With Postgres + providers
-configured and a future context-aware host, real tool paths can run.
+These are the SAME agent definitions used by the FastAPI orchestrator. The
+tools (`backend/aml/agents/tools/context_aware.py`) are context-aware: when the
+orchestrator binds a DB context they perform real reads/writes; in standalone
+`adk web` (no context / unconfigured providers) they return stub results
+(`adk_web_stub` / `adk_web_note`) so prompts and JSON output can be exercised
+without a database.
 
 Production analyst UI still uses:
   POST /cases/{case_id}/agents/{agent}/trigger
 
 Docker (optional)
 -----------------
-  docker run --rm -it -p 8000:8000 -v "$PWD:/app" -w /app/agents \
+  docker run --rm -it -p 8000:8000 -v "$PWD:/app" -w /app \
     -e GOOGLE_API_KEY \
-    aml/backend:dev adk web --host 0.0.0.0 --port 8000
+    aml/backend:dev adk web backend/aml/agents/stages --host 0.0.0.0 --port 8000
+
+Deployable ADK server (REST + dev UI, Cloud Run)
+------------------------------------------------
+backend/aml/agents/fast_api_app.py serves the same stage agents via ADK's
+get_fast_api_app (agents_dir = backend/aml/agents/stages). Run locally:
+
+  uvicorn backend.aml.agents.fast_api_app:app --host 0.0.0.0 --port 8080
+  curl http://localhost:8080/list-apps
+    -> ["case_analysis","due_diligence","initial_assessment","rag_agent","transaction_enrichment"]
+
+Container image: docker/Dockerfile.adk (Cloud Run target; honours $PORT).
+
+agents-cli
+----------
+`agents-cli info` recognizes this repo ([tool.agents-cli] in pyproject.toml,
+agent_directory = backend/aml/agents/stages).
+
+NOTE: `agents-cli run "<prompt>"` (local mode) roots its api_server at the
+project root and does not resolve our NESTED stage packages. Query the running
+ADK server instead (works against uvicorn above or a deployed Cloud Run URL):
+
+  agents-cli run "<prompt>" --url http://localhost:8080 --mode adk \
+    --app-name due_diligence
+
+Eval (per stage — see tests/eval/README.md)
+-------------------------------------------
+  adk eval backend/aml/agents/stages/<stage> \
+    tests/eval/evalsets/<stage>.evalset.json \
+    --config_file_path tests/eval/eval_config.json

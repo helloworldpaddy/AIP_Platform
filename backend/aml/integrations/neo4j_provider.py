@@ -127,6 +127,22 @@ class Neo4jGraphProvider:
             )
             records = await result.data()
 
+        # Neo4j can return one row per distinct path; parallel :TRANSFERRED_TO
+        # edges (one per ledger row) duplicate the same neighbor. Keep the
+        # shortest hop, then prefer the highest total_value tie-breaker.
+        records.sort(
+            key=lambda r: (
+                int(r.get("hop_count") or hop_distance),
+                -float(r.get("total_value") or 0.0),
+            )
+        )
+        by_party: dict[str, dict[str, Any]] = {}
+        for r in records:
+            pid = str(r["party_external_id"])
+            if pid not in by_party:
+                by_party[pid] = r
+        deduped = list(by_party.values())
+
         return [
             {
                 "party_external_id": r["party_external_id"],
@@ -139,7 +155,7 @@ class Neo4jGraphProvider:
                 "risk_flags": r.get("risk_flags") or {},
                 "hop_distance": int(r.get("hop_count") or hop_distance),
             }
-            for r in records
+            for r in deduped
         ]
 
     async def sync_case_transactions(

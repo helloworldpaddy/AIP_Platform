@@ -75,14 +75,29 @@ def build_llm_agent(
 
     ``description`` is optional metadata (e.g. ADK Web agent picker / docs).
     """
+    gen_config = genai_types.GenerateContentConfig(temperature=temperature)
+
+    # Gemini 2.5 models enable "dynamic thinking" by default. Combined with
+    # multi-step function calling this causes the model to occasionally spend a
+    # whole turn thinking and return an EMPTY response after the first tool
+    # round-trip — so stages like Transaction Enrichment stop after hop-1 and
+    # never emit their final JSON. Our prompts already force an explicit visible
+    # "Reasoning:" chain-of-thought, so internal thinking is redundant; disable
+    # it (budget 0) for reliable tool sequencing. Guarded for older SDKs.
+    try:
+        gen_config.thinking_config = genai_types.ThinkingConfig(
+            thinking_budget=0,
+            include_thoughts=False,
+        )
+    except (AttributeError, TypeError, ValueError):  # pragma: no cover
+        log.debug("adk_runner.thinking_config.unsupported model=%s", model)
+
     kwargs: dict[str, Any] = {
         "name": name,
         "model": model,
         "instruction": instruction,
         "tools": list(tools),
-        "generate_content_config": genai_types.GenerateContentConfig(
-            temperature=temperature,
-        ),
+        "generate_content_config": gen_config,
     }
     if description:
         kwargs["description"] = description

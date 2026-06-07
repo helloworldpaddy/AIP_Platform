@@ -48,6 +48,7 @@ services:
       - ../agents/rag_agent/db/schema.sql:/sql/rag-schema.sql:ro
       - ../backend/aml/db/schema.sql:/sql/aml-schema.sql:ro
       - ../backend/aml/db/schema_case_scenarios_transactions.sql:/sql/aml-case-scenarios-txns.sql:ro
+      - ../backend/aml/db/schema_services_swift.sql:/sql/aml-services-swift.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-raguser} -d ${POSTGRES_DB:-ragdb}"]
       interval: 5s

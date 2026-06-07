@@ -7,13 +7,15 @@ import json
 from .base import AgentContext
 from .llm_agent_base import LlmDrivenAgent
 from .prompts import INITIAL_ASSESSMENT_INSTRUCTION
+from .stages.initial_assessment.agent import TOOL_NAMES, root_agent as _root_agent
 from ..models.enums import AgentName
 
 
 class InitialAssessmentAgent(LlmDrivenAgent):
     name = AgentName.INITIAL_ASSESSMENT
     instruction = INITIAL_ASSESSMENT_INSTRUCTION
-    tool_names = ["policy_rag_search", "record_evidence"]
+    tool_names = TOOL_NAMES
+    root_agent = _root_agent
 
     def build_user_prompt(self, ctx: AgentContext) -> str:
         case = ctx.state.case

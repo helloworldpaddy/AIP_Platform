@@ -13,6 +13,24 @@ import { Empty } from "@/components/ui/empty";
 type RenderNode = GraphNode & { color: string; val: number };
 type RenderLink = GraphLink & { color: string };
 
+function linkStroke(link: GraphLink): string {
+  const pl = link.metadata?.neo4j_path_length;
+  if (typeof pl === "number" && pl >= 2) return "#c084fc"; // hop-2+ (Neo4j path length)
+  if (link.metadata?.source === "neo4j" || link.metadata?.neo4j_path_length != null) {
+    return "#818cf8"; // Neo4j hop-1 (or merged neo4j metadata)
+  }
+  return "#475569"; // case_parties / non-Neo4j
+}
+
+function linkCaption(link: GraphLink): string {
+  const rel = link.relationship || "RELATED";
+  const pl = link.metadata?.neo4j_path_length;
+  if (typeof pl === "number" && pl > 0) {
+    return `${rel} · Neo4j path ${pl} hop${pl === 1 ? "" : "s"}`;
+  }
+  return rel;
+}
+
 const KIND_COLOR: Record<GraphNode["kind"], string> = {
   subject: "#f97316",
   party: "#38bdf8",
@@ -66,7 +84,7 @@ export function CaseGraphPage() {
       })),
       links: src.links.map((l) => ({
         ...l,
-        color: l.metadata?.source === "neo4j" ? "#a78bfa" : "#475569",
+        color: linkStroke(l),
       })),
     };
   }, [graphQuery.data]);
@@ -103,8 +121,13 @@ export function CaseGraphPage() {
             <Network className="h-5 w-5 text-primary" /> Investigation graph
           </h1>
           <p className="text-sm text-muted-foreground">
-            Force-directed view of the case subject, related parties, and
-            (optionally) one extra hop from the Neo4j entity-link graph.
+            Force-directed view of the case subject and related parties. With{" "}
+            <span className="text-foreground">include Neo4j hop</span>, counterparties
+            from synced ledger data are added; each is drawn as one edge from the
+            subject (multi-step paths are not drawn as chains).{" "}
+            <span className="text-foreground">2 hops</span> only changes the result if
+            there are parties reachable in two graph relationships who are not already
+            reachable in one.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -198,9 +221,10 @@ export function CaseGraphPage() {
                     nodeLabel={(n: RenderNode) =>
                       `${n.label} (${n.kind}${n.hop_distance != null ? `, hop ${n.hop_distance}` : ""})`
                     }
-                    linkLabel={(l: RenderLink) => l.relationship}
+                    linkLabel={(l: RenderLink) => linkCaption(l)}
                     linkDirectionalArrowLength={3}
                     linkDirectionalArrowRelPos={1}
+                    linkColor={(l: RenderLink) => l.color}
                     linkWidth={(l: RenderLink) => Math.min(4, 0.5 + Math.log10(l.weight + 1))}
                     cooldownTicks={80}
                     onNodeClick={(n: RenderNode) =>
@@ -244,8 +268,15 @@ function Legend() {
       <Swatch color={KIND_COLOR.subject} label="Subject (case focus)" />
       <Swatch color={KIND_COLOR.party} label="Related party" />
       <Swatch color="#ef4444" label="Risk-flagged (PEP / shell / high-risk)" />
+      <li className="border-t border-border pt-2 text-[11px] font-medium text-muted-foreground">
+        Edges
+      </li>
+      <Swatch color="#475569" label="Case parties (from enrichment)" />
+      <Swatch color="#818cf8" label="Neo4j path length 1" />
+      <Swatch color="#c084fc" label="Neo4j path length 2" />
       <li className="pt-2 text-muted-foreground">
-        Click a node to inspect. Toggle Neo4j to expand counterparties.
+        Hover an edge for its label. Toggle Neo4j and use Refresh after syncing
+        ledger rows to Neo4j.
       </li>
     </ul>
   );

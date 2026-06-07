@@ -18,3 +18,21 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["agents*"]
+
+[tool.agents-cli]
+# Lets `agents-cli` recognize this repo as an ADK project. The investigation
+# agents are a multi-agent set discovered under the agent_directory below; each
+# subpackage exposes a `root_agent`. Deployable via docker/Dockerfile.adk
+# (Cloud Run) serving backend.aml.agents.fast_api_app:app.
+name = "aml-investigation-agents"
+description = "AML investigation ADK agents (initial_assessment, transaction_enrichment, due_diligence, case_analysis, rag_agent)"
+base_template = "adk"
+agent_directory = "backend/aml/agents/stages"
+acli_version = "0.1.1"
+
+[tool.agents-cli.create_params]
+deployment_target = "cloud_run"
+session_type = "in_memory"
+cicd_runner = "skip"
+include_data_ingestion = false
+datastore = "none"
