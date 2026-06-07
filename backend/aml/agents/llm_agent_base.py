@@ -87,6 +87,12 @@ class LlmDrivenAgent(BaseAgent):
     ) -> list[GateSpec]:
         return []
 
+    async def finalize_adk_web_result(
+        self, ctx: AgentContext, result: AgentResult
+    ) -> AgentResult:
+        """Optional post-processing after ADK web hybrid persist (e.g. narrative)."""
+        return result
+
     def reasoning_summary(
         self, output: dict[str, Any], turn: AdkTurnResult
     ) -> str | None:

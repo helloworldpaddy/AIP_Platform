@@ -92,14 +92,9 @@ class CaseAnalysisAgent(LlmDrivenAgent):
             "the schema in your instructions."
         )
 
-    async def run(self, ctx: AgentContext) -> AgentResult:
-        # Run the LLM as usual.
-        result = await super().run(ctx)
-        out = result.output_payload
-
-        # If the model produced a usable classification + narrative, persist a
-        # draft narrative now so the analyst sees something to review/submit
-        # without an extra round-trip.
+    async def _persist_narrative_if_valid(
+        self, ctx: AgentContext, out: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             classification = Classification(out["classification"])
             citations = _coerce_citations(out.get("citations", []))
@@ -111,12 +106,27 @@ class CaseAnalysisAgent(LlmDrivenAgent):
                 citations=citations,
                 created_by=self.name.value,
             )
-            # Echo the narrative_id back into the output so the UI can deep-link.
-            result.output_payload = {**out, "narrative_id": str(narrative.id)}
+            return {**out, "narrative_id": str(narrative.id)}
         except (KeyError, ValueError) as err:
             log.warning(
                 "case_analysis.narrative.skip reason=%s err=%s",
                 "schema_mismatch",
                 err,
             )
+            return out
+
+    async def finalize_adk_web_result(
+        self, ctx: AgentContext, result: AgentResult
+    ) -> AgentResult:
+        result.output_payload = await self._persist_narrative_if_valid(
+            ctx, result.output_payload
+        )
+        return result
+
+    async def run(self, ctx: AgentContext) -> AgentResult:
+        # Run the LLM as usual.
+        result = await super().run(ctx)
+        result.output_payload = await self._persist_narrative_if_valid(
+            ctx, result.output_payload
+        )
         return result

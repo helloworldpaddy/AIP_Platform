@@ -66,6 +66,10 @@ def build_llm_agent(
     tools: list[FunctionTool],
     temperature: float = 0.1,
     description: str | None = None,
+    before_agent_callback: Any | None = None,
+    after_agent_callback: Any | None = None,
+    before_model_callback: Any | None = None,
+    extra_tools: list[FunctionTool] | None = None,
 ) -> LlmAgent:
     """Construct a long-lived ADK LlmAgent for one of the AML stages.
 
@@ -74,6 +78,8 @@ def build_llm_agent(
     through the `agents.context` contextvar that wraps each run.
 
     ``description`` is optional metadata (e.g. ADK Web agent picker / docs).
+    Optional ADK callbacks support the hybrid ADK web runtime (case-number
+    resolution, prompt assembly, orchestrator-grade persist).
     """
     gen_config = genai_types.GenerateContentConfig(temperature=temperature)
 
@@ -92,15 +98,25 @@ def build_llm_agent(
     except (AttributeError, TypeError, ValueError):  # pragma: no cover
         log.debug("adk_runner.thinking_config.unsupported model=%s", model)
 
+    all_tools = list(tools)
+    if extra_tools:
+        all_tools.extend(extra_tools)
+
     kwargs: dict[str, Any] = {
         "name": name,
         "model": model,
         "instruction": instruction,
-        "tools": list(tools),
+        "tools": all_tools,
         "generate_content_config": gen_config,
     }
     if description:
         kwargs["description"] = description
+    if before_agent_callback is not None:
+        kwargs["before_agent_callback"] = before_agent_callback
+    if after_agent_callback is not None:
+        kwargs["after_agent_callback"] = after_agent_callback
+    if before_model_callback is not None:
+        kwargs["before_model_callback"] = before_model_callback
     return LlmAgent(**kwargs)
 
 

@@ -125,11 +125,12 @@ backend/aml/
         case_analysis.py
         fast_api_app.py         # deployable ADK server (get_fast_api_app)
         stages/                 # canonical root_agent per stage (adk web / eval)
-            initial_assessment/agent.py     # root_agent
-            transaction_enrichment/agent.py # root_agent
-            due_diligence/agent.py          # root_agent
-            case_analysis/agent.py          # root_agent
+            initial_assessment/agent.py     # root_agent (+ hybrid ADK callbacks)
+            transaction_enrichment/agent.py # root_agent (+ hybrid ADK callbacks)
+            due_diligence/agent.py          # root_agent (+ hybrid ADK callbacks)
+            case_analysis/agent.py          # root_agent (+ hybrid ADK callbacks)
             rag_agent/agent.py              # root_agent (re-export of agents/rag_agent)
+        runtime/                # hybrid ADK web: case resolve, callbacks, persist
         tools/
             context_aware.py    # ONE tool set: real DB ops when context bound,
                                 # safe stubs for standalone adk web / eval
@@ -297,6 +298,39 @@ adk web backend/aml/agents/stages --port 8000   # pick a stage in the top-left
 
 Discovers `initial_assessment`, `transaction_enrichment`, `due_diligence`,
 `case_analysis`, and `rag_agent`.
+
+#### Hybrid ADK web — all four stages (case-number driven)
+
+All workflow stages (`initial_assessment`, `transaction_enrichment`,
+`due_diligence`, `case_analysis`) ship ADK callbacks under
+`backend/aml/agents/runtime/` that mirror orchestrator phase 1 (gate /
+idempotency / `agent_runs`) and phase 3 (persist / audit / gates) when you
+include a case number in chat:
+
+```bash
+export GOOGLE_API_KEY=...
+export POSTGRES_HOST=localhost POSTGRES_USER=raguser POSTGRES_PASSWORD=ragpass POSTGRES_DB=ragdb
+# optional for TE graph hops: NEO4J_URI=bolt://localhost:7687 NEO4J_USER=neo4j NEO4J_PASSWORD=neo4jpass
+adk web backend/aml/agents/stages --port 8001
+```
+
+| Stage | Example message | Prerequisites |
+|-------|-----------------|---------------|
+| `initial_assessment` | `Run initial assessment for AML-SERVICES-SWIFT-2026-005` | none |
+| `transaction_enrichment` | `Run transaction enrichment for AML-SERVICES-SWIFT-2026-005` | IA complete |
+| `due_diligence` | `Run due diligence for AML-SERVICES-SWIFT-2026-005` | `PARTIES_VERIFIED` gate cleared |
+| `case_analysis` | `Run case analysis for AML-SERVICES-SWIFT-2026-005` | prior stages complete |
+
+Callbacks resolve the case, assemble the orchestrator-equivalent prompt (via each
+stage's `build_user_prompt`), bind real DB tool context, and persist the run as
+`AWAITING_REVIEW`. Case Analysis also persists a draft narrative (same as prod).
+
+Optional parity tools (same path as `POST /cases/{id}/agents/{agent}/trigger`):
+
+- `trigger_initial_assessment_via_orchestrator(case_number="...")`
+- `trigger_transaction_enrichment_via_orchestrator(case_number="...")`
+- `trigger_due_diligence_via_orchestrator(case_number="...")`
+- `trigger_case_analysis_via_orchestrator(case_number="...")`
 
 ### Deployable ADK server (REST + dev UI, Cloud Run)
 

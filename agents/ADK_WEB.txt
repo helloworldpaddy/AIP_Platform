@@ -42,6 +42,39 @@ orchestrator binds a DB context they perform real reads/writes; in standalone
 (`adk_web_stub` / `adk_web_note`) so prompts and JSON output can be exercised
 without a database.
 
+Hybrid ADK web (all four stages — case number driven)
+----------------------------------------------------
+All workflow stage agents include ADK callbacks that wire real Postgres +
+providers when you include a case number in the user message:
+
+  export GOOGLE_API_KEY=...
+  export POSTGRES_HOST=localhost POSTGRES_USER=raguser POSTGRES_PASSWORD=ragpass POSTGRES_DB=ragdb
+  # optional: NEO4J_URI=bolt://localhost:7687 NEO4J_USER=neo4j NEO4J_PASSWORD=...
+  adk web backend/aml/agents/stages --port 8001
+
+Examples (select the matching agent in the picker):
+
+  Run initial assessment for AML-SERVICES-SWIFT-2026-005
+  Run transaction enrichment for AML-SERVICES-SWIFT-2026-005
+  Run due diligence for AML-SERVICES-SWIFT-2026-005
+  Run case analysis for AML-SERVICES-SWIFT-2026-005
+
+The callbacks will:
+  • resolve the case from `aml.cases`
+  • enforce open gates (e.g. PARTIES_VERIFIED blocks due_diligence)
+  • build the same prompt as each stage's `build_user_prompt`
+  • bind `AgentToolContext` so write tools hit the real ledger
+  • persist `agent_runs` + audit on completion (status AWAITING_REVIEW)
+  • open stage gates (e.g. TE opens PARTIES_VERIFIED)
+  • case_analysis: persist draft narrative via `finalize_adk_web_result`
+
+Optional parity tools (full Orchestrator path, same as the frontend trigger):
+
+  trigger_initial_assessment_via_orchestrator(case_number="...")
+  trigger_transaction_enrichment_via_orchestrator(case_number="...")
+  trigger_due_diligence_via_orchestrator(case_number="...")
+  trigger_case_analysis_via_orchestrator(case_number="...")
+
 Production analyst UI still uses:
   POST /cases/{case_id}/agents/{agent}/trigger
 
