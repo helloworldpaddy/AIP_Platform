@@ -180,8 +180,6 @@ async def complete_adk_web_run(
     session: Session,
 ) -> AgentRun:
     """Phase-3 orchestrator logic: persist output, audit, optional stage advance."""
-    from ...orchestrator.service import Orchestrator
-
     db = get_aml_db_client()
     wrapper = _stage_wrapper(inv.agent_name)
 
@@ -276,9 +274,9 @@ async def complete_adk_web_run(
             )
 
         if not result.requires_review:
-            from ..registry import build_default_agents
+            from .orchestrator_client import build_runtime_orchestrator
 
-            orch = Orchestrator(db, build_default_agents())
+            orch = build_runtime_orchestrator()
             await orch._advance_stage(  # noqa: SLF001
                 repos,
                 case_id=inv.case_id,

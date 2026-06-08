@@ -75,6 +75,22 @@ Optional parity tools (full Orchestrator path, same as the frontend trigger):
   trigger_due_diligence_via_orchestrator(case_number="...")
   trigger_case_analysis_via_orchestrator(case_number="...")
 
+Orchestrator mode (Sprint 4 — transport + A2A aware)
+----------------------------------------------------
+Set ``AML_ADK_MODE=orchestrator`` so hybrid callbacks delegate each turn to
+``Orchestrator.trigger_agent`` instead of running the ADK LLM in-process.
+This uses the same execution ports as production (``in_process`` or per-stage
+``a2a`` from ``AML_AGENT_TRANSPORT_*``). No separate tool call required.
+
+  export AML_ADK_MODE=orchestrator
+  export POSTGRES_HOST=localhost POSTGRES_USER=raguser POSTGRES_PASSWORD=ragpass POSTGRES_DB=ragdb
+  adk web backend/aml/agents/stages --port 8001
+
+Example: ``Run due diligence for AML-SERVICES-SWIFT-2026-005``
+
+Default ``AML_ADK_MODE=hybrid`` keeps the existing ADK-in-process + callback
+persist path described above.
+
 Production analyst UI still uses:
   POST /cases/{case_id}/agents/{agent}/trigger
 

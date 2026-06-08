@@ -123,6 +123,14 @@ class CaseAnalysisAgent(LlmDrivenAgent):
         )
         return result
 
+    async def finalize_a2a_result(
+        self, ctx: AgentContext, result: AgentResult
+    ) -> AgentResult:
+        result.output_payload = await self._persist_narrative_if_valid(
+            ctx, result.output_payload
+        )
+        return result
+
     async def run(self, ctx: AgentContext) -> AgentResult:
         # Run the LLM as usual.
         result = await super().run(ctx)

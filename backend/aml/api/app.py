@@ -30,6 +30,7 @@ from .routes.gates import router as gates_router
 from .routes.graph import router as graph_router
 from .routes.narratives import router as narratives_router
 from .routes.parties import router as parties_router
+from .routes.tool_gateway import router as tool_gateway_router
 from .schemas import HealthResponse
 
 log = logging.getLogger(__name__)
@@ -219,5 +220,6 @@ def create_app(*, cors_origins: list[str] | None = None) -> FastAPI:
     app.include_router(narratives_router)
     app.include_router(audit_router)
     app.include_router(graph_router)
+    app.include_router(tool_gateway_router)
 
     return app

@@ -10,9 +10,14 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types as genai_types
 
+from ...config.adk_mode import AdkMode, load_adk_mode
 from ...models.enums import AgentName
 from .bootstrap import ensure_runtime_ready
 from .case_resolver import parse_case_number
+from .orchestrator_invoke import (
+    format_orchestrator_run_for_chat,
+    invoke_orchestrator_stage,
+)
 from .run_lifecycle import (
     AdkWebInvocation,
     cleanup_adk_web_invocation,
@@ -30,6 +35,8 @@ _STATE_PROMPT = "aml_assembled_prompt"
 _STATE_PROMPT_INJECTED = "aml_prompt_injected"
 _STATE_RUN_ID = "aml_run_id"
 _STATE_CASE_ID = "aml_case_id"
+_STATE_ORCHESTRATOR_MODE = "aml_orchestrator_mode"
+_STATE_ORCH_RESPONSE = "aml_orchestrator_response"
 
 
 def _user_text(callback_context: CallbackContext) -> str:
@@ -69,6 +76,32 @@ def hybrid_callbacks(
         callback_context.state[_STATE_CASE_NUMBER] = case_number
         callback_context.state[_STATE_PROMPT_INJECTED] = False
 
+        if load_adk_mode() == AdkMode.ORCHESTRATOR:
+            run = await invoke_orchestrator_stage(
+                case_number=case_number,
+                agent_name=agent_name,
+                triggered_by="adk_web",
+                extra_input={
+                    "invocation_id": callback_context.invocation_id,
+                    "adk_mode": AdkMode.ORCHESTRATOR.value,
+                },
+            )
+            callback_context.state[_STATE_ORCHESTRATOR_MODE] = True
+            callback_context.state[_STATE_ORCH_RESPONSE] = (
+                format_orchestrator_run_for_chat(run)
+            )
+            callback_context.state[_STATE_RUN_ID] = str(run.id)
+            callback_context.state[_STATE_CASE_ID] = str(run.case_id)
+            callback_context.state["aml_last_run_status"] = run.status.value
+            callback_context.state["aml_last_output"] = run.output_payload
+            log.info(
+                "runtime.callback.before_agent orchestrator agent=%s case=%s run_id=%s",
+                agent_name.value,
+                case_number,
+                run.id,
+            )
+            return
+
         inv = await start_adk_web_run(
             case_number=case_number,
             agent_name=agent_name,
@@ -91,6 +124,16 @@ def hybrid_callbacks(
         llm_request: LlmRequest,
     ) -> LlmResponse | None:
         """Replace the chat message with the orchestrator-equivalent prompt once."""
+        if callback_context.state.get(_STATE_ORCHESTRATOR_MODE):
+            response_text = callback_context.state.get(_STATE_ORCH_RESPONSE) or ""
+            callback_context.state[_STATE_PROMPT_INJECTED] = True
+            return LlmResponse(
+                content=genai_types.Content(
+                    role="model",
+                    parts=[genai_types.Part(text=response_text)],
+                )
+            )
+
         prompt = callback_context.state.get(_STATE_PROMPT)
         if not prompt:
             return None
@@ -120,6 +163,14 @@ def hybrid_callbacks(
 
     async def after_agent_callback(callback_context: CallbackContext) -> None:
         """Persist the ADK web turn through the same agent_runs / audit path."""
+        if callback_context.state.get(_STATE_ORCHESTRATOR_MODE):
+            log.info(
+                "runtime.callback.after_agent orchestrator agent=%s run_id=%s",
+                agent_name.value,
+                callback_context.state.get(_STATE_RUN_ID),
+            )
+            return
+
         inv = _ACTIVE.pop(callback_context.invocation_id, None)
         if inv is None:
             return

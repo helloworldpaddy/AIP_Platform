@@ -32,7 +32,8 @@ import secrets
 from agents.rag_agent.config.settings import get_settings
 from backend.aml.agents.base import BaseAgent
 from backend.aml.api.app import create_app
-from backend.aml.api.dependencies import get_db, get_orchestrator
+from backend.aml.agents.tool_gateway import build_tool_gateway_service
+from backend.aml.api.dependencies import get_db, get_orchestrator, get_tool_gateway
 from backend.aml.db.client import AmlDbClient
 from backend.aml.models.enums import AgentName
 from backend.aml.orchestrator import Orchestrator
@@ -46,6 +47,12 @@ from .stubs import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AML_SCHEMA_SQL = _REPO_ROOT / "backend" / "aml" / "db" / "schema.sql"
+_AML_SCHEMA_CASE_TXN_SQL = (
+    _REPO_ROOT / "backend" / "aml" / "db" / "schema_case_scenarios_transactions.sql"
+)
+_AML_SCHEMA_SERVICES_SWIFT_SQL = (
+    _REPO_ROOT / "backend" / "aml" / "db" / "schema_services_swift.sql"
+)
 
 
 def _sync_dsn() -> str:
@@ -76,6 +83,8 @@ def _reset_schema() -> None:
         with conn.cursor() as cur:
             cur.execute("DROP SCHEMA IF EXISTS aml CASCADE")
             cur.execute(_AML_SCHEMA_SQL.read_text(encoding="utf-8"))
+            cur.execute(_AML_SCHEMA_CASE_TXN_SQL.read_text(encoding="utf-8"))
+            cur.execute(_AML_SCHEMA_SERVICES_SWIFT_SQL.read_text(encoding="utf-8"))
     finally:
         conn.close()
 
@@ -118,7 +127,11 @@ def stub_agents() -> dict[AgentName, BaseAgent]:
 def orchestrator(
     aml_db: AmlDbClient, stub_agents: dict[AgentName, BaseAgent]
 ) -> Orchestrator:
-    return Orchestrator(aml_db, agents=stub_agents)
+    return Orchestrator(
+        aml_db,
+        agents=stub_agents,
+        tool_gateway=build_tool_gateway_service(aml_db),
+    )
 
 
 @pytest_asyncio.fixture()
@@ -130,9 +143,15 @@ async def api_app(
     Uses `dependency_overrides` so route handlers see the same singletons
     the test fixtures hold — avoids spawning a second pool.
     """
-    orch = Orchestrator(aml_db, agents=stub_agents)
+    orch = Orchestrator(
+        aml_db,
+        agents=stub_agents,
+        tool_gateway=build_tool_gateway_service(aml_db),
+    )
+    gateway = build_tool_gateway_service(aml_db)
     app = create_app()
     app.dependency_overrides[get_db] = lambda: aml_db
     app.dependency_overrides[get_orchestrator] = lambda: orch
+    app.dependency_overrides[get_tool_gateway] = lambda: gateway
     yield app
     app.dependency_overrides.clear()

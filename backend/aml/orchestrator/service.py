@@ -26,6 +26,14 @@ from typing import Any
 from uuid import UUID
 
 from ..agents.base import AgentContext, AgentResult, BaseAgent, GateSpec
+from ..agents.adapters.factory import build_execution_ports
+from ..agents.ports import AgentExecutionPort, ToolGatewaySpec
+from ..agents.tool_gateway.service import ToolGatewayService
+from ..config.agent_transport import (
+    AgentTransport,
+    AgentTransportConfig,
+    load_agent_transport_config,
+)
 from ..db.client import AmlDbClient
 from ..db.state_loader import load_investigation_state
 from ..models.enums import (
@@ -69,10 +77,18 @@ class Orchestrator:
         db: AmlDbClient,
         agents: dict[AgentName, BaseAgent],
         *,
+        execution_ports: dict[AgentName, AgentExecutionPort] | None = None,
+        transport_config: AgentTransportConfig | None = None,
+        tool_gateway: ToolGatewayService | None = None,
         max_retry_attempts: int = 4,
     ) -> None:
         self._db = db
         self._agents = agents
+        self._transport_config = transport_config or load_agent_transport_config()
+        self._execution_ports = execution_ports or build_execution_ports(
+            agents, self._transport_config
+        )
+        self._tool_gateway = tool_gateway
         self._max_attempts = max_retry_attempts
 
     # =========================================================================
@@ -154,7 +170,11 @@ class Orchestrator:
         # below — the agent gets a *transactional* repos handle for that).
         started = time.monotonic()
         result_or_err = await self._execute_with_retry(
-            agent=agent, case_id=case_id, run=run, extra_input=extra_input
+            agent=agent,
+            agent_name=agent_name,
+            case_id=case_id,
+            run=run,
+            extra_input=extra_input,
         )
         duration_ms = int((time.monotonic() - started) * 1000)
 
@@ -299,10 +319,15 @@ class Orchestrator:
         self,
         *,
         agent: BaseAgent,
+        agent_name: AgentName,
         case_id: UUID,
         run: AgentRun,
         extra_input: dict[str, Any],
     ) -> AgentResult | BaseException:
+        port = self._execution_ports.get(agent_name)
+        if port is None:
+            return LookupError(f"no execution port registered for {agent_name.value}")
+
         async def _attempt() -> AgentResult:
             # Each attempt gets its own transactional bundle so any evidence
             # the agent records is committed alongside its output even if a
@@ -315,7 +340,20 @@ class Orchestrator:
                     run=run,
                     extra_input=extra_input,
                 )
-                return await agent.run(ctx)
+                user_message = agent.build_user_prompt(ctx)
+                tool_gateway = self._mint_tool_gateway(
+                    agent=agent,
+                    agent_name=agent_name,
+                    case_id=case_id,
+                    run=run,
+                )
+                return await port.execute(
+                    agent_name=agent_name,
+                    agent=agent,
+                    ctx=ctx,
+                    user_message=user_message,
+                    tool_gateway=tool_gateway,
+                )
 
         try:
             return await call_with_retry(
@@ -528,6 +566,28 @@ class Orchestrator:
         )
 
     # ------------------------------------------------------------------ utils
+    def _mint_tool_gateway(
+        self,
+        *,
+        agent: BaseAgent,
+        agent_name: AgentName,
+        case_id: UUID,
+        run: AgentRun,
+    ) -> ToolGatewaySpec | None:
+        if self._transport_config.transport_for(agent_name) != AgentTransport.A2A:
+            return None
+        if self._tool_gateway is None:
+            return None
+        allowed = list(getattr(agent, "tool_names", None) or [])
+        if not allowed:
+            return None
+        return self._tool_gateway.mint_for_run(
+            run_id=run.id,
+            case_id=case_id,
+            agent_name=agent_name,
+            allowed_tools=allowed,
+        )
+
     def _require_agent(self, name: AgentName) -> BaseAgent:
         agent = self._agents.get(name)
         if agent is None:

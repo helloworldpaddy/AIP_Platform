@@ -16,6 +16,8 @@ from uuid import UUID
 from fastapi import Depends, Header, HTTPException, Path, status
 
 from ..agents.registry import build_default_agents
+from ..agents.tool_gateway import ToolGatewayService, build_tool_gateway_service
+from ..config.agent_transport import load_agent_transport_config
 from ..db.client import AmlDbClient, get_aml_db_client
 from ..db.state_loader import load_investigation_state
 from ..models.state import InvestigationState
@@ -26,16 +28,31 @@ from ..orchestrator import Orchestrator
 # ---------------------------------------------------------------------------
 
 _orchestrator: Orchestrator | None = None
+_tool_gateway: ToolGatewayService | None = None
 
 
 def get_db() -> AmlDbClient:
     return get_aml_db_client()
 
 
+def get_tool_gateway(db: AmlDbClient = Depends(get_db)) -> ToolGatewayService:
+    global _tool_gateway
+    if _tool_gateway is None:
+        _tool_gateway = build_tool_gateway_service(db)
+    return _tool_gateway
+
+
 def get_orchestrator(db: AmlDbClient = Depends(get_db)) -> Orchestrator:
     global _orchestrator
     if _orchestrator is None:
-        _orchestrator = Orchestrator(db, agents=build_default_agents())
+        transport_config = load_agent_transport_config()
+        agents = build_default_agents()
+        _orchestrator = Orchestrator(
+            db,
+            agents=agents,
+            transport_config=transport_config,
+            tool_gateway=build_tool_gateway_service(db),
+        )
     return _orchestrator
 
 

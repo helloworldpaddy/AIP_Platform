@@ -40,6 +40,20 @@ adk eval backend/aml/agents/stages/case_analysis \
 works if you temporarily point `[tool.agents-cli].agent_directory` at a single
 stage (it wraps `adk eval ./{agent_directory} <evalset>`).
 
+## Run all stages (Sprint 5 harness)
+
+```bash
+export GOOGLE_API_KEY=...
+chmod +x scripts/run_aml_evals.sh
+./scripts/run_aml_evals.sh
+./scripts/run_aml_evals.sh due_diligence   # single stage
+```
+
+## Parity vs orchestrator
+
+Stub-based parity (no LLM) lives in `tests/aml/test_parity_harness.py`.
+Transport architecture: `docs/AGENT_TRANSPORT.md`.
+
 ## Iterating (eval-fix loop)
 
 1. Start with these 1-2 cases per stage.

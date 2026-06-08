@@ -5,33 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ...db.client import get_aml_db_client
 from ...models.enums import AgentName
-from ...orchestrator.service import Orchestrator
-from .bootstrap import ensure_runtime_ready
-from .case_resolver import load_case_by_number, parse_case_number
+from .orchestrator_invoke import invoke_orchestrator_stage
 
 log = logging.getLogger(__name__)
-
-_orchestrator: Orchestrator | None = None
-
-
-def _get_orchestrator() -> Orchestrator:
-    global _orchestrator
-    if _orchestrator is None:
-        from ..registry import build_default_agents
-
-        _orchestrator = Orchestrator(get_aml_db_client(), build_default_agents())
-    return _orchestrator
-
-
-def _normalize_case_number(case_number: str) -> str | None:
-    case_number = case_number.strip().upper()
-    if parse_case_number(case_number):
-        return case_number
-    if case_number.startswith("AML-"):
-        return case_number
-    return None
 
 
 async def trigger_stage_via_orchestrator(
@@ -39,28 +16,14 @@ async def trigger_stage_via_orchestrator(
     agent_name: AgentName,
 ) -> dict[str, Any]:
     """Run an AML stage through the production Orchestrator (parity smoke test)."""
-    await ensure_runtime_ready()
-    normalized = _normalize_case_number(case_number)
-    if normalized is None:
-        return {"error": f"invalid case_number: {case_number!r}"}
-
-    case = await load_case_by_number(normalized)
-    orch = _get_orchestrator()
-    run = await orch.trigger_agent(
-        case_id=case.id,
+    run = await invoke_orchestrator_stage(
+        case_number=case_number,
         agent_name=agent_name,
         triggered_by="adk_web",
         extra_input={"source": "orchestrator_tool"},
     )
-    log.info(
-        "runtime.orchestrator_tool.done agent=%s case=%s run_id=%s status=%s",
-        agent_name.value,
-        normalized,
-        run.id,
-        run.status.value,
-    )
     return {
-        "case_number": case.case_number,
+        "case_number": case_number.strip().upper(),
         "agent": agent_name.value,
         "run_id": str(run.id),
         "status": run.status.value,

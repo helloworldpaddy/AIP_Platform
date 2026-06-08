@@ -40,6 +40,15 @@ def _classify(err: BaseException) -> bool:
     status = getattr(err, "status_code", None) or getattr(err, "code", None)
     if status in {408, 429, 500, 502, 503, 504}:
         return True
+    cls_module = getattr(err.__class__, "__module__", "")
+    if cls_module.startswith("httpx") and cls_name in {
+        "TimeoutException",
+        "ConnectError",
+        "ReadError",
+        "NetworkError",
+        "RemoteProtocolError",
+    }:
+        return True
     return False
 
 

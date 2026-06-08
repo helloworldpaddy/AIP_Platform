@@ -24,27 +24,31 @@ class DueDiligenceAgent(LlmDrivenAgent):
     tool_names = TOOL_NAMES
     root_agent = _root_agent
 
-    async def run(self, ctx: AgentContext) -> AgentResult:
+    async def preflight(self, ctx: AgentContext) -> AgentResult | None:
         unverified = [p for p in ctx.state.parties if not p.verified]
-        if unverified:
-            # Short-circuit — return a structured "aborted" output so the
-            # orchestrator still records a clean run.
-            names = ", ".join(p.party_name for p in unverified[:5])
-            return AgentResult(
-                output_payload={
-                    "aborted": True,
-                    "reason": "unverified_parties_present",
-                    "unverified_count": len(unverified),
-                    "sample_party_names": names,
-                },
-                reasoning=(
-                    "Pre-flight check: detected unverified parties. Refusing "
-                    "to proceed.  Analyst must clear PARTIES_VERIFIED gate."
-                ),
-                reasoning_summary="aborted: unverified parties present",
-                tokens=TokenUsage(),
-                requires_review=True,
-            )
+        if not unverified:
+            return None
+        names = ", ".join(p.party_name for p in unverified[:5])
+        return AgentResult(
+            output_payload={
+                "aborted": True,
+                "reason": "unverified_parties_present",
+                "unverified_count": len(unverified),
+                "sample_party_names": names,
+            },
+            reasoning=(
+                "Pre-flight check: detected unverified parties. Refusing "
+                "to proceed.  Analyst must clear PARTIES_VERIFIED gate."
+            ),
+            reasoning_summary="aborted: unverified parties present",
+            tokens=TokenUsage(),
+            requires_review=True,
+        )
+
+    async def run(self, ctx: AgentContext) -> AgentResult:
+        early = await self.preflight(ctx)
+        if early is not None:
+            return early
         return await super().run(ctx)
 
     def build_user_prompt(self, ctx: AgentContext) -> str:

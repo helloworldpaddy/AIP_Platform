@@ -164,6 +164,7 @@ frontend/src/
 
 docker/
     docker-compose.yml          # postgres + neo4j + backend + frontend
+    .env.a2a                    # A2A overlay for --profile a2a + frontend
     Dockerfile.backend          # FastAPI orchestrator (analyst API)
     Dockerfile.adk              # deployable ADK agent server (Cloud Run)
     Dockerfile.frontend
@@ -193,15 +194,149 @@ tests/eval/                     # ADK evaluation (per stage)
 ### Option A (fastest): run the full app via Docker
 
 ```bash
-cp docker/.env.example docker/.env       # edit credentials + GEMINI_API_KEY as needed
-docker compose -f docker/docker-compose.yml up -d --build
+cp docker/.env.example docker/.env       # set GOOGLE_API_KEY at minimum
+docker compose -f docker/docker-compose.yml --env-file docker/.env up --build
 ```
 
 Then open:
 
-- Frontend: `http://localhost:5173`
+- Frontend: `http://localhost:8080` (nginx; port from `FRONTEND_PORT`)
 - Backend docs: `http://localhost:8000/docs`
 - Neo4j Browser: `http://localhost:7474`
+
+Agent stages run **in-process** inside `aml-backend` (default transport).
+
+Seed a demo case (Postgres on `localhost:5432`):
+
+```bash
+export POSTGRES_HOST=localhost POSTGRES_USER=raguser POSTGRES_PASSWORD=ragpass POSTGRES_DB=ragdb
+python scripts/aml_seed.py --preset services-swift --skip-policies
+# → case_number=AML-SERVICES-SWIFT-2026-001
+```
+
+In the frontend, set **X-Analyst-Id** to `analyst.demo`, open the case, and use
+**Run** / **Approve** on each workflow stage.
+
+### Option A2: Frontend with remote A2A agents
+
+Use this when you want the **React analyst console** to drive the same
+orchestrator path as production, but with each workflow stage executing on a
+**remote A2A host** (separate containers). The frontend does not need any code
+changes — it still calls `POST /cases/{id}/agents/{agent}/trigger`; the
+backend's `A2aAdapter` delegates to the remote hosts.
+
+```text
+Browser (localhost:8080)
+    → frontend nginx → aml-backend (orchestrator)
+        → A2aAdapter → ia-agent / te-agent / dd-agent / ca-agent (:8101–8104)
+            → tool gateway → aml-backend (case-scoped DB writes)
+```
+
+**1. Configure secrets**
+
+```bash
+cp docker/.env.example docker/.env
+# Edit docker/.env — set GOOGLE_API_KEY (required on backend + all four A2A hosts)
+```
+
+A2A transport URLs and tool-gateway settings live in `docker/.env.a2a` (overlay,
+no secrets). Merge it at compose time:
+
+**2. Start stack + A2A profile**
+
+```bash
+docker compose -f docker/docker-compose.yml \
+  --env-file docker/.env \
+  --env-file docker/.env.a2a \
+  --profile a2a up --build
+```
+
+| Service | URL |
+|---------|-----|
+| **Frontend (start here)** | http://localhost:8080 |
+| Backend API | http://localhost:8000/docs |
+| IA A2A host | http://localhost:8101/.well-known/agent-card.json |
+| TE A2A host | http://localhost:8102/.well-known/agent-card.json |
+| DD A2A host | http://localhost:8103/.well-known/agent-card.json |
+| CA A2A host | http://localhost:8104/.well-known/agent-card.json |
+
+**3. Verify A2A hosts (before using the UI)**
+
+```bash
+curl -s http://localhost:8101/.well-known/agent-card.json | head -c 120
+curl -s http://localhost:8102/.well-known/agent-card.json | head -c 120
+curl -s http://localhost:8103/.well-known/agent-card.json | head -c 120
+curl -s http://localhost:8104/.well-known/agent-card.json | head -c 120
+```
+
+**4. Seed a demo case**
+
+```bash
+export POSTGRES_HOST=localhost POSTGRES_USER=raguser POSTGRES_PASSWORD=ragpass POSTGRES_DB=ragdb
+python scripts/aml_seed.py --preset services-swift --skip-policies
+```
+
+Or from inside the backend container:
+
+```bash
+docker exec -it aml-backend python scripts/aml_seed.py --preset services-swift --skip-policies
+```
+
+**5. Walk through the frontend (one stage at a time)**
+
+1. Open http://localhost:8080
+2. Set analyst id to `analyst.demo` in the top bar
+3. Open case `AML-SERVICES-SWIFT-2026-001`
+4. On the case detail page, use **Step progress** and **Run** in order:
+
+| Step | Panel | Actions |
+|------|-------|---------|
+| 1 | Initial Assessment | **Run** → wait (LLM) → **Approve** |
+| 2 | Transaction Enrichment | **Run** → **Approve** |
+| 3 | Parties + gate | Verify parties in sidebar → approve **PARTIES_VERIFIED** |
+| 4 | Due Diligence | **Run** → **Approve** |
+| 5 | Case Analysis | **Run** → review narrative |
+
+The UI polls every 3s while a run is `RUNNING`.
+
+**6. Confirm A2A traffic**
+
+While clicking **Run**, watch logs:
+
+```bash
+docker logs -f aml-backend 2>&1 | grep -i a2a
+docker logs -f aml-ia-agent    # repeat for te-agent, dd-agent, ca-agent
+```
+
+**Incremental rollout:** edit `docker/.env.a2a` (or `docker/.env`) to set
+`AML_AGENT_TRANSPORT_DEFAULT=in_process` and only override one stage, e.g.
+`AML_AGENT_TRANSPORT_DUE_DILIGENCE=a2a`, then recreate the backend:
+
+```bash
+docker compose -f docker/docker-compose.yml \
+  --env-file docker/.env --env-file docker/.env.a2a \
+  --profile a2a up -d --force-recreate backend
+```
+
+**Local Vite dev server** (optional — same backend + A2A stack in Docker):
+
+```bash
+cd frontend && echo "VITE_API_BASE_URL=http://localhost:8000" > .env.local
+npm install && npm run dev
+# → http://localhost:5173 (CORS already allows this origin)
+```
+
+Architecture and env reference: [docs/AGENT_TRANSPORT.md](docs/AGENT_TRANSPORT.md).
+
+**Common issues**
+
+| Symptom | Fix |
+|---------|-----|
+| Run stuck `RUNNING` | Check `GOOGLE_API_KEY` on backend and all `*-agent` containers |
+| `AML_A2A_*_URL is not set` | Include `--env-file docker/.env.a2a` and restart backend |
+| Tool gateway errors in agent logs | `AML_TOOL_GATEWAY_BASE_URL` must be `http://backend:8000` inside Docker |
+| Due Diligence blocked | Complete TE, verify parties, approve **PARTIES_VERIFIED** gate |
+| Config change ignored | `docker compose ... up -d --force-recreate backend` |
 
 ### Option B (dev): run infra in Docker + backend/frontend locally
 
@@ -231,7 +366,7 @@ pip install -r requirements.txt
 Add a `.env` (or set in your shell) with at minimum:
 
 ```
-GEMINI_API_KEY=...
+GOOGLE_API_KEY=...
 POSTGRES_HOST=localhost
 POSTGRES_USER=raguser
 POSTGRES_PASSWORD=ragpass
@@ -482,6 +617,20 @@ vars override `config.yaml`.
 | `database.pool_max`    | `10`                 | asyncpg pool max connections         |
 | `database.statement_timeout_ms` | `30000`     | Per-statement timeout                |
 | `cache_enabled`        | `false`              | Redis query/embedding cache          |
+
+Agent transport (orchestrator ↔ stage execution) is configured via env vars on
+`aml-backend`. For Docker + frontend + remote stages, use
+`docker/.env` + `docker/.env.a2a` with `--profile a2a` — see
+[Option A2](#option-a2-frontend-with-remote-a2a-agents) and
+[docs/AGENT_TRANSPORT.md](docs/AGENT_TRANSPORT.md).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `AML_AGENT_TRANSPORT_DEFAULT` | `in_process` | `in_process` or `a2a` for all stages |
+| `AML_AGENT_TRANSPORT_<STAGE>` | — | Per-stage override (`INITIAL_ASSESSMENT`, …) |
+| `AML_A2A_<STAGE>_URL` | — | Agent card URL when transport is `a2a` |
+| `AML_TOOL_GATEWAY_BASE_URL` | `http://backend:8000` | URL remote agents use for DB tools |
+| `AML_A2A_TIMEOUT_SECONDS` | `600` | Remote stage call timeout |
 
 ---
 

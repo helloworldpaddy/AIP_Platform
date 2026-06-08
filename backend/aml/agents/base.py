@@ -77,3 +77,23 @@ class BaseAgent(ABC):
     # the same extra_input deterministically resumes.
     def idempotency_input(self, ctx_extra: dict[str, Any]) -> dict[str, Any]:
         return ctx_extra
+
+    def build_user_prompt(self, ctx: AgentContext) -> str:
+        """Logical user turn for A2A parity; in-process agents may ignore this."""
+        extra = ctx.extra_input or {}
+        return extra.get("user_message") or extra.get("prompt") or ""
+
+    async def preflight(self, ctx: AgentContext) -> AgentResult | None:
+        """Optional short-circuit before execution (e.g. Due Diligence gate checks)."""
+        return None
+
+    async def finalize_a2a_result(
+        self, ctx: AgentContext, result: AgentResult
+    ) -> AgentResult:
+        """Post-process a remote A2A result (e.g. persist narrative for Case Analysis)."""
+        return result
+
+    def next_gates(
+        self, ctx: AgentContext, output: dict[str, Any]
+    ) -> list[GateSpec]:
+        return []

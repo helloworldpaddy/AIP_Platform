@@ -5,6 +5,12 @@
 #     # edit docker/.env to set GOOGLE_API_KEY at minimum
 #     docker compose -f docker/docker-compose.yml --env-file docker/.env up --build
 #
+# Frontend + remote A2A agents (see README "Frontend with A2A"):
+#     docker compose -f docker/docker-compose.yml \
+#       --env-file docker/.env --env-file docker/.env.a2a \
+#       --profile a2a up --build
+#     # → http://localhost:8080 (frontend) · agent cards on :8101–:8104
+#
 # Services:
 #   * postgres   pgvector/pg16 — both the RAG `documents` table and the
 #                `aml.*` schema, initialized once on first boot from the
@@ -17,6 +23,7 @@
 #
 # Profiles:
 #     docker compose --profile cache  up   # also runs redis
+#     docker compose --profile a2a up    # four remote A2A stage hosts + backend A2A env
 #
 # Networks:
 #   Everything sits on the default `aml-net` bridge so services resolve each
@@ -145,6 +152,20 @@ services:
       # Requeue RUNNING rows only after this many minutes (LLM steps can be slow).
       AML_STALE_RUNNING_MINUTES: ${AML_STALE_RUNNING_MINUTES:-30}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Agent transport (default in_process; enable per-stage A2A with profile `a2a`)
+      AML_AGENT_TRANSPORT_DEFAULT: ${AML_AGENT_TRANSPORT_DEFAULT:-in_process}
+      AML_AGENT_TRANSPORT_INITIAL_ASSESSMENT: ${AML_AGENT_TRANSPORT_INITIAL_ASSESSMENT:-in_process}
+      AML_AGENT_TRANSPORT_TRANSACTION_ENRICHMENT: ${AML_AGENT_TRANSPORT_TRANSACTION_ENRICHMENT:-in_process}
+      AML_AGENT_TRANSPORT_DUE_DILIGENCE: ${AML_AGENT_TRANSPORT_DUE_DILIGENCE:-in_process}
+      AML_AGENT_TRANSPORT_CASE_ANALYSIS: ${AML_AGENT_TRANSPORT_CASE_ANALYSIS:-in_process}
+      AML_A2A_INITIAL_ASSESSMENT_URL: ${AML_A2A_INITIAL_ASSESSMENT_URL:-}
+      AML_A2A_TRANSACTION_ENRICHMENT_URL: ${AML_A2A_TRANSACTION_ENRICHMENT_URL:-}
+      AML_A2A_DUE_DILIGENCE_URL: ${AML_A2A_DUE_DILIGENCE_URL:-}
+      AML_A2A_CASE_ANALYSIS_URL: ${AML_A2A_CASE_ANALYSIS_URL:-}
+      AML_A2A_TIMEOUT_SECONDS: ${AML_A2A_TIMEOUT_SECONDS:-600}
+      AML_TOOL_GATEWAY_SECRET: ${AML_TOOL_GATEWAY_SECRET:-aml-dev-tool-gateway-secret}
+      AML_TOOL_GATEWAY_BASE_URL: ${AML_TOOL_GATEWAY_BASE_URL:-http://backend:8000}
+      AML_TOOL_GATEWAY_TTL_SECONDS: ${AML_TOOL_GATEWAY_TTL_SECONDS:-3600}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     networks: [aml-net]
@@ -173,6 +194,85 @@ services:
     ports:
       - "${REDIS_PORT:-6379}:6379"
     profiles: ["cache"]
+    networks: [aml-net]
+
+  # Shared A2A stage image — build once (ia-agent), reuse for te/dd/ca.
+  # Parallel `build` blocks targeting the same tag cause Buildx export races:
+  # "image aml/a2a-stage:dev: already exists".
+  ia-agent:
+    profiles: ["a2a"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.a2a-stage
+    image: aml/a2a-stage:dev
+    container_name: aml-ia-agent
+    restart: unless-stopped
+    environment:
+      AML_A2A_STAGE: INITIAL_ASSESSMENT
+      AML_A2A_PUBLIC_HOST: ia-agent
+      PORT: 8101
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}
+    ports:
+      - "8101:8101"
+    networks: [aml-net]
+
+  te-agent:
+    profiles: ["a2a"]
+    image: aml/a2a-stage:dev
+    container_name: aml-te-agent
+    restart: unless-stopped
+    depends_on:
+      ia-agent:
+        condition: service_started
+      neo4j:
+        condition: service_healthy
+    environment:
+      AML_A2A_STAGE: TRANSACTION_ENRICHMENT
+      AML_A2A_PUBLIC_HOST: te-agent
+      PORT: 8102
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/neo4jpass}
+    ports:
+      - "8102:8102"
+    networks: [aml-net]
+
+  dd-agent:
+    profiles: ["a2a"]
+    image: aml/a2a-stage:dev
+    container_name: aml-dd-agent
+    restart: unless-stopped
+    depends_on:
+      ia-agent:
+        condition: service_started
+    environment:
+      AML_A2A_STAGE: DUE_DILIGENCE
+      AML_A2A_PUBLIC_HOST: dd-agent
+      PORT: 8103
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}
+    ports:
+      - "8103:8103"
+    networks: [aml-net]
+
+  ca-agent:
+    profiles: ["a2a"]
+    image: aml/a2a-stage:dev
+    container_name: aml-ca-agent
+    restart: unless-stopped
+    depends_on:
+      ia-agent:
+        condition: service_started
+    environment:
+      AML_A2A_STAGE: CASE_ANALYSIS
+      AML_A2A_PUBLIC_HOST: ca-agent
+      PORT: 8104
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}
+    ports:
+      - "8104:8104"
     networks: [aml-net]
 
 networks:

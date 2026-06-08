@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from uuid import UUID
 
-import asyncpg
-
 from ..models.enums import AgentName, AgentRunStatus, CaseStage, GateStatus
 from ..models.state import (
     AgentRun,
@@ -18,6 +16,7 @@ from ..models.state import (
     StageProgress,
 )
 from .client import AmlRepositories
+from .optional_schema import load_optional
 
 # Mapping from a case stage to the agent that owns it.
 _STAGE_AGENT: dict[CaseStage, AgentName | None] = {
@@ -80,17 +79,21 @@ async def load_investigation_state(
     gates = await repos.gates.list_for_case(case_id)
     narratives = await repos.narratives.list_for_case(case_id)
 
-    try:
-        case_transactions = await repos.case_monitoring.list_transactions_for_case(
-            case_id
-        )
-    except asyncpg.exceptions.UndefinedTableError:
-        case_transactions = []
+    conn = repos.connection
 
-    try:
-        swift_messages = await repos.services_swift.list_messages_for_case(case_id)
-    except asyncpg.exceptions.UndefinedTableError:
-        swift_messages = []
+    case_transactions = await load_optional(
+        conn,
+        lambda: repos.case_monitoring.list_transactions_for_case(case_id),
+        default=[],
+        savepoint_prefix="case_txns",
+    )
+
+    swift_messages = await load_optional(
+        conn,
+        lambda: repos.services_swift.list_messages_for_case(case_id),
+        default=[],
+        savepoint_prefix="swift_msgs",
+    )
 
     progress = [
         _progress_for(stage, agent, agent_runs, gates)
