@@ -101,10 +101,19 @@ class ToolGatewayService:
                 repos=repos,
             )
             fn = ADK_TOOLS[tool_name].func
-            with bind_tool_context(tool_ctx):
-                result = fn(**arguments)
-                if inspect.isawaitable(result):
-                    result = await result
+            try:
+                with bind_tool_context(tool_ctx):
+                    result = fn(**arguments)
+                    if inspect.isawaitable(result):
+                        result = await result
+            except TypeError as err:
+                log.warning(
+                    "tool_gateway.invoke.bad_arguments tool=%s err=%s args=%s",
+                    tool_name,
+                    err,
+                    list(arguments.keys()),
+                )
+                return {"error": f"invalid arguments for {tool_name}: {err}"}
 
         if not isinstance(result, dict):
             return {"result": result}

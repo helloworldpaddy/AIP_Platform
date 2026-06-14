@@ -9,7 +9,7 @@
 #     docker compose -f docker/docker-compose.yml \
 #       --env-file docker/.env --env-file docker/.env.a2a \
 #       --profile a2a up --build
-#     # → http://localhost:8080 (frontend) · agent cards on :8101–:8104
+#     # → http://localhost:8080 (frontend) · aml-host :8100 · stage cards :8101–:8104
 #
 # Services:
 #   * postgres   pgvector/pg16 — both the RAG `documents` table and the
@@ -177,6 +177,8 @@ services:
       args:
         # Empty → SPA emits requests to /api/*, nginx proxies to backend.
         VITE_API_BASE_URL: ""
+        VITE_A2A_BASE_URL: /a2a
+        VITE_AML_AGENT_CHAT_ENABLED: "true"
     image: aml/frontend:dev
     container_name: aml-frontend
     restart: unless-stopped
@@ -210,6 +212,8 @@ services:
     environment:
       AML_A2A_STAGE: INITIAL_ASSESSMENT
       AML_A2A_PUBLIC_HOST: ia-agent
+      AML_A2UI_ENABLED: ${AML_A2UI_ENABLED:-false}
+      AML_A2UI_STAGES: ${AML_A2UI_STAGES:-INITIAL_ASSESSMENT}
       PORT: 8101
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}
@@ -273,6 +277,47 @@ services:
       GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}
     ports:
       - "8104:8104"
+    networks: [aml-net]
+
+  # Sprint 7 — AML host agent (A2A front door → orchestrator).
+  aml-host:
+    profiles: ["a2a"]
+    image: aml/a2a-stage:dev
+    container_name: aml-aml-host
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+      ia-agent:
+        condition: service_started
+    environment:
+      AML_A2A_PUBLIC_HOST: aml-host
+      PORT: 8100
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-ragdb}
+      POSTGRES_USER: ${POSTGRES_USER:-raguser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ragpass}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/neo4jpass}
+      AML_AGENT_TRANSPORT_DEFAULT: ${AML_AGENT_TRANSPORT_DEFAULT:-in_process}
+      AML_A2A_INITIAL_ASSESSMENT_URL: ${AML_A2A_INITIAL_ASSESSMENT_URL:-}
+      AML_A2A_TRANSACTION_ENRICHMENT_URL: ${AML_A2A_TRANSACTION_ENRICHMENT_URL:-}
+      AML_A2A_DUE_DILIGENCE_URL: ${AML_A2A_DUE_DILIGENCE_URL:-}
+      AML_A2A_CASE_ANALYSIS_URL: ${AML_A2A_CASE_ANALYSIS_URL:-}
+      AML_A2A_TIMEOUT_SECONDS: ${AML_A2A_TIMEOUT_SECONDS:-600}
+      AML_TOOL_GATEWAY_SECRET: ${AML_TOOL_GATEWAY_SECRET:-aml-dev-tool-gateway-secret}
+      AML_TOOL_GATEWAY_BASE_URL: ${AML_TOOL_GATEWAY_BASE_URL:-http://backend:8000}
+      AML_A2UI_ENABLED: ${AML_A2UI_ENABLED:-false}
+      AML_A2UI_STAGES: ${AML_A2UI_STAGES:-INITIAL_ASSESSMENT}
+    ports:
+      - "8100:8100"
+    command:
+      - sh
+      - -c
+      - uvicorn backend.aml.agents.a2a.host_app:get_app --factory --host 0.0.0.0 --port $${PORT:-8100} --proxy-headers --forwarded-allow-ips '*'
     networks: [aml-net]
 
 networks:

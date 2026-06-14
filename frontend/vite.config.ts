@@ -17,6 +17,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api/, ""),
       },
+      "/a2a": {
+        target: process.env.VITE_A2A_TARGET ?? "http://localhost:8100",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/a2a/, ""),
+      },
     },
   },
 });

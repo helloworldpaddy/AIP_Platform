@@ -60,6 +60,18 @@ _TERMINAL = {
     AgentRunStatus.REJECTED,
 }
 
+# Successful terminals are true no-ops on re-trigger with the same input.
+_SUCCESS_TERMINAL = {
+    AgentRunStatus.APPROVED,
+    AgentRunStatus.COMPLETED,
+}
+
+# Failed terminals are retried via a fresh idempotency key (UI "Re-run").
+_RETRY_TERMINAL = {
+    AgentRunStatus.FAILED,
+    AgentRunStatus.REJECTED,
+}
+
 
 def is_terminal_status(status: AgentRunStatus) -> bool:
     return status in _TERMINAL

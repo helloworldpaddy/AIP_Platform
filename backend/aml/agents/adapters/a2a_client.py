@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -12,10 +14,21 @@ import httpx
 from a2a.client.card_resolver import A2ACardResolver
 from a2a.client.client import ClientConfig
 from a2a.client.client_factory import ClientFactory
-from a2a.types import Message, Part, Role, Task, TaskState, TextPart
+from a2a.types import Message, Part, Role, Task, TaskQueryParams, TaskState, TextPart
 from a2a.utils.message import get_message_text
 
 log = logging.getLogger(__name__)
+
+_POLL_INTERVAL_SECONDS = 1.0
+
+_TERMINAL_TASK_STATES = frozenset(
+    {
+        TaskState.completed,
+        TaskState.failed,
+        TaskState.canceled,
+        TaskState.rejected,
+    }
+)
 
 
 class A2aRemoteError(RuntimeError):
@@ -69,7 +82,7 @@ class A2aRemoteClient:
         config = ClientConfig(
             httpx_client=self._httpx_client,
             streaming=False,
-            polling=True,
+            polling=False,
         )
         self._factory = ClientFactory(config=config)
         self._client = self._factory.create(card)
@@ -116,13 +129,24 @@ class A2aRemoteClient:
             task, _update = event
             if task is None:
                 continue
-            task_id = task.id
-            context_id = task.context_id or context_id
-            if task.status is not None:
-                task_state = task.status.state
-            extracted = _extract_agent_text(task)
-            if extracted:
-                final_text = extracted
+            task_id, context_id, task_state, final_text = _merge_task_snapshot(
+                task,
+                task_id=task_id,
+                context_id=context_id,
+                task_state=task_state,
+                final_text=final_text,
+            )
+
+        if task_id and (
+            not _is_terminal_task_state(task_state) or not final_text.strip()
+        ):
+            task_id, context_id, task_state, final_text = await self._poll_task(
+                client,
+                task_id=task_id,
+                context_id=context_id,
+                task_state=task_state,
+                final_text=final_text,
+            )
 
         if task_state == TaskState.failed:
             raise A2aRemoteError(
@@ -139,6 +163,59 @@ class A2aRemoteClient:
             context_id=context_id,
             task_state=task_state,
         )
+
+    async def _poll_task(
+        self,
+        client,
+        *,
+        task_id: str,
+        context_id: str | None,
+        task_state: TaskState | None,
+        final_text: str,
+    ) -> tuple[str, str | None, TaskState | None, str]:
+        """Poll ``tasks/get`` until the task is terminal or the timeout elapses."""
+        deadline = time.monotonic() + self._timeout_seconds
+        while time.monotonic() < deadline:
+            if _is_terminal_task_state(task_state) and final_text.strip():
+                break
+
+            await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+            task = await client.get_task(TaskQueryParams(id=task_id))
+            task_id, context_id, task_state, final_text = _merge_task_snapshot(
+                task,
+                task_id=task_id,
+                context_id=context_id,
+                task_state=task_state,
+                final_text=final_text,
+            )
+
+        return task_id, context_id, task_state, final_text
+
+
+def _is_terminal_task_state(state: TaskState | None) -> bool:
+    return state in _TERMINAL_TASK_STATES
+
+
+def _merge_task_snapshot(
+    task: Task,
+    *,
+    task_id: str | None,
+    context_id: str | None,
+    task_state: TaskState | None,
+    final_text: str,
+) -> tuple[str, str | None, TaskState | None, str]:
+    task_id = task.id or task_id
+    context_id = task.context_id or context_id
+    if task.status is not None:
+        task_state = task.status.state
+        if task.status.message is not None:
+            status_text = get_message_text(task.status.message)
+            if status_text.strip():
+                final_text = status_text
+    extracted = _extract_agent_text(task)
+    if extracted:
+        final_text = extracted
+    return task_id, context_id, task_state, final_text
 
 
 def _extract_agent_text(task: Task) -> str:

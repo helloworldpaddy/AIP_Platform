@@ -19,10 +19,15 @@ from ..prompts import (
     INITIAL_ASSESSMENT_INSTRUCTION,
     TRANSACTION_ENRICHMENT_INSTRUCTION,
 )
+from .a2ui import (
+    a2ui_instruction_suffix,
+    a2ui_tools_for_stage,
+    seed_a2ui_session_catalog,
+)
 from .gateway_tools import (
     GatewayToolContext,
     gateway_tools_named,
-    reset_gateway_tool_context,
+    reset_bound_gateway_tool_context,
     set_gateway_tool_context,
 )
 from .metadata import parse_tool_gateway_from_metadata
@@ -57,6 +62,16 @@ _STAGE_CONFIG: dict[AgentName, dict[str, Any]] = {
 }
 
 
+async def _before_a2a_host_agent(
+    callback_context: CallbackContext,
+    *,
+    agent_name: AgentName,
+) -> None:
+    """Bind tool gateway metadata and optional A2UI session catalog."""
+    await bind_tool_gateway_from_a2a_metadata(callback_context)
+    await seed_a2ui_session_catalog(callback_context, agent_name=agent_name)
+
+
 async def bind_tool_gateway_from_a2a_metadata(
     callback_context: CallbackContext,
 ) -> None:
@@ -82,17 +97,14 @@ async def bind_tool_gateway_from_a2a_metadata(
         return
 
     ctx = GatewayToolContext(url=url, token=token, allowed_tools=allowed)
-    reset_token = set_gateway_tool_context(ctx)
-    callback_context.state["_aml_gateway_reset"] = reset_token
+    set_gateway_tool_context(ctx)
     callback_context.state["aml_tool_gateway"] = gateway
 
 
 async def reset_tool_gateway_from_a2a_metadata(
     callback_context: CallbackContext,
 ) -> None:
-    reset_token = callback_context.state.get("_aml_gateway_reset")
-    if reset_token is not None:
-        reset_gateway_tool_context(reset_token)
+    reset_bound_gateway_tool_context()
 
 
 def build_a2a_host_agent(agent_name: AgentName) -> LlmAgent:
@@ -101,13 +113,20 @@ def build_a2a_host_agent(agent_name: AgentName) -> LlmAgent:
     if cfg is None:
         raise LookupError(f"no A2A host config for {agent_name.value}")
 
+    instruction = cfg["instruction"] + a2ui_instruction_suffix(agent_name=agent_name)
+    a2ui_tools = a2ui_tools_for_stage(agent_name)
+
+    async def before_agent(callback_context: CallbackContext) -> None:
+        await _before_a2a_host_agent(callback_context, agent_name=agent_name)
+
     return build_llm_agent(
         name=cfg["adk_name"],
-        instruction=cfg["instruction"],
+        instruction=instruction,
         model=get_settings().gemini.generation_model,
         tools=gateway_tools_named(list(cfg["tool_names"])),
         temperature=0.1,
         description=cfg["description"],
-        before_agent_callback=bind_tool_gateway_from_a2a_metadata,
+        before_agent_callback=before_agent,
         after_agent_callback=reset_tool_gateway_from_a2a_metadata,
+        extra_tool_objects=a2ui_tools or None,
     )

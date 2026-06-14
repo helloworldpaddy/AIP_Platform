@@ -53,6 +53,8 @@ from .transitions import (
     NEXT_AGENT_FOR_STAGE,
     NEXT_STAGE,
     STAGE_FOR_AGENT,
+    _RETRY_TERMINAL,
+    _SUCCESS_TERMINAL,
     is_terminal_status,
     stage_lt,
 )
@@ -139,7 +141,34 @@ class Orchestrator:
             )
 
             # Resume / no-op decisions.
-            if not created and is_terminal_status(run.status):
+            if not created and run.status in _SUCCESS_TERMINAL:
+                log.info(
+                    "orchestrator.noop terminal_status=%s run_id=%s",
+                    run.status.value,
+                    run.id,
+                )
+                return run
+
+            while not created and run.status in _RETRY_TERMINAL:
+                retry_key = idempotency_key(
+                    case_id=case_id,
+                    agent=agent_name.value,
+                    input_payload={
+                        **input_payload,
+                        "aml_retry_of": str(run.id),
+                    },
+                )
+                run, created = await repos.agent_runs.get_or_create_run(
+                    case_id=case_id,
+                    agent=agent_name,
+                    idempotency_key=retry_key,
+                    input_payload=input_payload,
+                    model_name=agent.model_name,
+                )
+                if created or run.status in _SUCCESS_TERMINAL:
+                    break
+
+            if not created and run.status in _SUCCESS_TERMINAL:
                 log.info(
                     "orchestrator.noop terminal_status=%s run_id=%s",
                     run.status.value,

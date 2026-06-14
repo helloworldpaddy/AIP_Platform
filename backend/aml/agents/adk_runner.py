@@ -70,6 +70,7 @@ def build_llm_agent(
     after_agent_callback: Any | None = None,
     before_model_callback: Any | None = None,
     extra_tools: list[FunctionTool] | None = None,
+    extra_tool_objects: list[Any] | None = None,
 ) -> LlmAgent:
     """Construct a long-lived ADK LlmAgent for one of the AML stages.
 
@@ -98,9 +99,11 @@ def build_llm_agent(
     except (AttributeError, TypeError, ValueError):  # pragma: no cover
         log.debug("adk_runner.thinking_config.unsupported model=%s", model)
 
-    all_tools = list(tools)
+    all_tools: list[Any] = list(tools)
     if extra_tools:
         all_tools.extend(extra_tools)
+    if extra_tool_objects:
+        all_tools.extend(extra_tool_objects)
 
     kwargs: dict[str, Any] = {
         "name": name,

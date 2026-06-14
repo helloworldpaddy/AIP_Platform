@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { CaseStatusBadge, PriorityBadge } from "@/components/StatusBadge";
 import { StepProgress } from "@/components/StepProgress";
 import { AgentRunPanel } from "@/components/AgentRunPanel";
+import { AgentChatPanel } from "@/components/AgentChatPanel";
 import { GatePanel } from "@/components/GatePanel";
 import { PartiesPanel } from "@/components/PartiesPanel";
 import { NarrativeEditor } from "@/components/NarrativeEditor";
@@ -207,6 +208,8 @@ export function CaseDetailPage() {
           )}
         </aside>
       </div>
+
+      <AgentChatPanel caseNumber={state.case.case_number} caseId={state.case.id} />
 
       <NarrativeEditor state={state} />
 

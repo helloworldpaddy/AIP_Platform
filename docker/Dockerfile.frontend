@@ -11,7 +11,11 @@ RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 # Empty VITE_API_BASE_URL keeps requests relative; nginx then proxies /api → backend.
 ARG VITE_API_BASE_URL=
+ARG VITE_A2A_BASE_URL=/a2a
+ARG VITE_AML_AGENT_CHAT_ENABLED=true
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+ENV VITE_A2A_BASE_URL=${VITE_A2A_BASE_URL}
+ENV VITE_AML_AGENT_CHAT_ENABLED=${VITE_AML_AGENT_CHAT_ENABLED}
 RUN npm run build
 
 # ---- runtime ----------------------------------------------------------------

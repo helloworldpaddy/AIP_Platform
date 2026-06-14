@@ -204,3 +204,30 @@ async def test_http_invoke_endpoint(
     body = resp.json()
     assert body["tool"] == "record_evidence"
     assert "evidence_id" in body["result"]
+
+
+async def test_gateway_invoke_returns_error_on_bad_arguments(
+    aml_db: AmlDbClient,
+    case_number: str,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AML_TOOL_GATEWAY_SECRET", "pytest-tool-gateway-secret")
+    case = await _create_case(aml_db, case_number=case_number)
+    run = await _running_run(aml_db, case_id=case.id)
+
+    gateway = build_tool_gateway_service(aml_db)
+    spec = gateway.mint_for_run(
+        run_id=run.id,
+        case_id=case.id,
+        agent_name=AgentName.INITIAL_ASSESSMENT,
+        allowed_tools=["policy_rag_search"],
+    )
+    claims = verify_tool_gateway_token(spec.token)
+
+    result = await gateway.invoke(
+        claims=claims,
+        tool_name="policy_rag_search",
+        arguments={},
+    )
+    assert "error" in result
+    assert "query" in result["error"].lower()

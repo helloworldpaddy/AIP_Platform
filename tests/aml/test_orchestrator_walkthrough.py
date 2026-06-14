@@ -207,6 +207,36 @@ async def test_idempotent_trigger_returns_same_run(
     assert third.status.value == "APPROVED"
 
 
+async def test_failed_run_retries_on_retrigger(
+    aml_db: AmlDbClient,
+    orchestrator: Orchestrator,
+    case_number: str,
+) -> None:
+    """Re-trigger after FAILED mints a new run (UI Re-run / host agent retry)."""
+    case = await _create_case(aml_db, case_number=case_number)
+
+    first = await orchestrator.trigger_agent(
+        case_id=case.id,
+        agent_name=AgentName.INITIAL_ASSESSMENT,
+        triggered_by="analyst.test",
+    )
+    async with aml_db.transaction() as repos:
+        await repos.agent_runs.mark_failed(
+            run_id=first.id,
+            error="simulated failure",
+            duration_ms=1,
+        )
+
+    second = await orchestrator.trigger_agent(
+        case_id=case.id,
+        agent_name=AgentName.INITIAL_ASSESSMENT,
+        triggered_by="analyst.test",
+    )
+    assert second.id != first.id
+    assert second.attempt > first.attempt
+    assert second.status.value == "AWAITING_REVIEW"
+
+
 async def test_locked_case_refuses_further_triggers(
     aml_db: AmlDbClient,
     orchestrator: Orchestrator,

@@ -10,6 +10,14 @@ During eval the agents run **standalone** (no orchestrator DB context), so the
 context-aware tools return safe stubs — scoring focuses on the agent's reasoning,
 tool usage, and output schema rather than real data.
 
+## A2UI schema checks (Sprint 9)
+
+```bash
+pytest tests/aml/test_a2ui_s9.py -q
+```
+
+Validates example A2UI payloads against the BasicCatalog validator (no LLM judge).
+
 ## Multi-agent note
 
 This repo is a multi-agent project: `agents-cli`'s `agent_directory`
