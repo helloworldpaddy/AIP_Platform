@@ -72,7 +72,7 @@ export function AgentRunPanel({ state, agent }: Props) {
       <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
         <div>
           <CardTitle className="text-lg">{AGENT_LABEL[agent]}</CardTitle>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {run ? (
               <>
                 <RunStatusBadge status={run.status} />

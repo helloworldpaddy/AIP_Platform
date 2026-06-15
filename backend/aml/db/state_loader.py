@@ -74,6 +74,12 @@ async def load_investigation_state(
         raise LookupError(f"case {case_id} not found")
 
     agent_runs = await repos.agent_runs.list_for_case(case_id)
+    from ..agents.a2a.a2ui import hydrate_agent_run_payloads
+
+    agent_runs = hydrate_agent_run_payloads(
+        agent_runs,
+        case_priority=case.priority.value,
+    )
     evidence = await repos.evidence.list_for_case(case_id)
     parties = await repos.parties.list_for_case(case_id)
     gates = await repos.gates.list_for_case(case_id)

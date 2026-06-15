@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { casesApi, graphApi } from "@/lib/api";
+import {
+  getCaseWorkflowMode,
+  resolveInitialWorkflowMode,
+  subscribeWorkflowMode,
+  type CaseWorkflowMode,
+} from "@/lib/case-workflow-mode";
 import { isBlocked, latestRun } from "@/lib/state";
 import type { AgentName } from "@/lib/types";
 import { AGENT_ORDER } from "@/lib/types";
@@ -11,6 +17,8 @@ import { CaseStatusBadge, PriorityBadge } from "@/components/StatusBadge";
 import { StepProgress } from "@/components/StepProgress";
 import { AgentRunPanel } from "@/components/AgentRunPanel";
 import { AgentChatPanel } from "@/components/AgentChatPanel";
+import { CaseWorkflowModePicker } from "@/components/CaseWorkflowModePicker";
+import { CaseWorkflowModeSwitch } from "@/components/CaseWorkflowModeSwitch";
 import { GatePanel } from "@/components/GatePanel";
 import { PartiesPanel } from "@/components/PartiesPanel";
 import { NarrativeEditor } from "@/components/NarrativeEditor";
@@ -20,6 +28,8 @@ import { ChevronLeft, Network, RefreshCw } from "lucide-react";
 export function CaseDetailPage() {
   const { caseId } = useParams<{ caseId: string }>();
   const qc = useQueryClient();
+  const [workflowMode, setWorkflowMode] = useState<CaseWorkflowMode | null>(null);
+
   const stateQuery = useQuery({
     queryKey: ["case", caseId],
     queryFn: () => casesApi.get(caseId!),
@@ -31,6 +41,14 @@ export function CaseDetailPage() {
       return anyRunning ? 3_000 : false;
     },
   });
+
+  useEffect(() => {
+    if (!caseId) return;
+    setWorkflowMode(resolveInitialWorkflowMode(caseId));
+    return subscribeWorkflowMode(() => {
+      setWorkflowMode(getCaseWorkflowMode(caseId) ?? resolveInitialWorkflowMode(caseId));
+    });
+  }, [caseId]);
 
   const loadTransactionsToGraph = useMutation({
     mutationFn: () => graphApi.syncTransactionsToNeo4j(caseId!),
@@ -51,7 +69,6 @@ export function CaseDetailPage() {
   const [selected, setSelected] = useState<AgentName>("INITIAL_ASSESSMENT");
   const [ledgerToGraphMessage, setLedgerToGraphMessage] = useState<string | null>(null);
 
-  // Auto-focus the most recent active agent on first load.
   useEffect(() => {
     const state = stateQuery.data;
     if (!state) return;
@@ -88,6 +105,7 @@ export function CaseDetailPage() {
 
   const state = stateQuery.data;
   const blockedAgents = AGENT_ORDER.filter((a) => isBlocked(state, a));
+  const isAssistant = workflowMode === "assistant";
 
   return (
     <div className="space-y-4">
@@ -111,109 +129,156 @@ export function CaseDetailPage() {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>
-            stage:{" "}
-            <span className="font-medium text-foreground">
-              {state.case.current_stage.replace(/_/g, " ").toLowerCase()}
+        <div className="flex flex-col items-end gap-2">
+          {workflowMode && (
+            <CaseWorkflowModeSwitch
+              caseId={state.case.id}
+              mode={workflowMode}
+              onChange={setWorkflowMode}
+            />
+          )}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>
+              stage:{" "}
+              <span className="font-medium text-foreground">
+                {state.case.current_stage.replace(/_/g, " ").toLowerCase()}
+              </span>
             </span>
-          </span>
-          <span>· assigned: {state.case.assigned_analyst_id ?? "—"}</span>
-          <Link to={`/cases/${state.case.id}/graph`}>
-            <Button size="sm" variant="ghost">
-              <Network className="h-3.5 w-3.5" /> Graph
+            <span>· assigned: {state.case.assigned_analyst_id ?? "—"}</span>
+            <Link to={`/cases/${state.case.id}/graph`}>
+              <Button size="sm" variant="ghost">
+                <Network className="h-3.5 w-3.5" /> Graph
+              </Button>
+            </Link>
+            <Button size="sm" variant="ghost" onClick={() => stateQuery.refetch()}>
+              <RefreshCw className="h-3.5 w-3.5" /> Refresh
             </Button>
-          </Link>
-          <Button size="sm" variant="ghost" onClick={() => stateQuery.refetch()}>
-            <RefreshCw className="h-3.5 w-3.5" /> Refresh
-          </Button>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-12 gap-4">
-        <aside className="col-span-12 lg:col-span-3">
-          <Card>
-            <CardHeader>
-              <CardTitle>Step progress</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <StepProgress state={state} selected={selected} onSelect={setSelected} />
-            </CardContent>
-          </Card>
-        </aside>
+      {!workflowMode && (
+        <CaseWorkflowModePicker
+          caseNumber={state.case.case_number}
+          caseId={state.case.id}
+          onSelect={setWorkflowMode}
+        />
+      )}
 
-        <section className="col-span-12 lg:col-span-6">
-          <AgentRunPanel state={state} agent={selected} />
-        </section>
+      {workflowMode && (
+        <>
+          <WorkflowModeBanner mode={workflowMode} />
 
-        <aside className="col-span-12 space-y-4 lg:col-span-3">
-          <GatePanel state={state} />
-          <PartiesPanel state={state} />
-          {(state.case_transactions ?? []).length > 0 && (
-            <Card>
-              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-2">
-                <CardTitle className="text-base">Case transactions</CardTitle>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={loadTransactionsToGraph.isPending}
-                  title="Copy ledger rows from Postgres into Neo4j for graph hops"
-                  onClick={() => loadTransactionsToGraph.mutate()}
-                >
-                  {loadTransactionsToGraph.isPending ? "Loading…" : "Load transactions to graph"}
-                </Button>
-              </CardHeader>
-              <CardContent className="space-y-3 text-xs">
-                {(ledgerToGraphMessage || loadTransactionsToGraph.isError) && (
-                  <div className="space-y-1 rounded-md border border-border bg-muted/30 p-2">
-                    {ledgerToGraphMessage && (
-                      <p className="text-muted-foreground">{ledgerToGraphMessage}</p>
+          <div className="grid grid-cols-12 gap-4">
+            <aside className="col-span-12 lg:col-span-3">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Step progress</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <StepProgress state={state} selected={selected} onSelect={setSelected} />
+                </CardContent>
+              </Card>
+            </aside>
+
+            <section
+              className={
+                isAssistant ? "col-span-12 space-y-4 lg:col-span-9" : "col-span-12 lg:col-span-6"
+              }
+            >
+              {isAssistant ? (
+                <AgentChatPanel caseNumber={state.case.case_number} caseId={state.case.id} />
+              ) : (
+                <AgentRunPanel state={state} agent={selected} />
+              )}
+            </section>
+
+            <aside className="col-span-12 space-y-4 lg:col-span-3">
+              <GatePanel state={state} />
+              <PartiesPanel state={state} />
+              {(state.case_transactions ?? []).length > 0 && (
+                <Card>
+                  <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-2">
+                    <CardTitle className="text-base">Case transactions</CardTitle>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={loadTransactionsToGraph.isPending}
+                      title="Copy ledger rows from Postgres into Neo4j for graph hops"
+                      onClick={() => loadTransactionsToGraph.mutate()}
+                    >
+                      {loadTransactionsToGraph.isPending ? "Loading…" : "Load transactions to graph"}
+                    </Button>
+                  </CardHeader>
+                  <CardContent className="space-y-3 text-xs">
+                    {(ledgerToGraphMessage || loadTransactionsToGraph.isError) && (
+                      <div className="space-y-1 rounded-md border border-border bg-muted/30 p-2">
+                        {ledgerToGraphMessage && (
+                          <p className="text-muted-foreground">{ledgerToGraphMessage}</p>
+                        )}
+                        {loadTransactionsToGraph.isError && (
+                          <p className="text-destructive">
+                            {(loadTransactionsToGraph.error as Error)?.message ??
+                              "Could not load transactions to graph (is Neo4j configured?)"}
+                          </p>
+                        )}
+                      </div>
                     )}
-                    {loadTransactionsToGraph.isError && (
-                      <p className="text-destructive">
-                        {(loadTransactionsToGraph.error as Error)?.message ??
-                          "Could not load transactions to graph (is Neo4j configured?)"}
-                      </p>
-                    )}
-                  </div>
-                )}
-                {(state.case_transactions ?? []).map((t) => (
-                  <div
-                    key={t.id}
-                    className="border-b border-border pb-2 last:border-0 last:pb-0"
-                  >
-                    <div className="font-mono text-[11px] text-muted-foreground">
-                      {t.external_transaction_id}
-                    </div>
-                    <div className="mt-0.5 font-medium">
-                      {String(t.amount)} {t.currency} · {t.direction} ·{" "}
-                      {t.payment_channel.replace(/_/g, " ")}
-                    </div>
-                    <div className="text-muted-foreground">
-                      {t.product_category.replace(/_/g, " ")}
-                      {t.counterparty_name ? ` · ${t.counterparty_name}` : ""}
-                      {t.counterparty_country ? ` (${t.counterparty_country})` : ""}
-                    </div>
-                    {t.narrative && (
-                      <div className="mt-1 text-muted-foreground">{t.narrative}</div>
-                    )}
-                    <div className="mt-0.5 text-[10px] text-muted-foreground">
-                      {new Date(t.booked_at).toLocaleString()}
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-        </aside>
-      </div>
+                    {(state.case_transactions ?? []).map((t) => (
+                      <div
+                        key={t.id}
+                        className="border-b border-border pb-2 last:border-0 last:pb-0"
+                      >
+                        <div className="font-mono text-[11px] text-muted-foreground">
+                          {t.external_transaction_id}
+                        </div>
+                        <div className="mt-0.5 font-medium">
+                          {String(t.amount)} {t.currency} · {t.direction} ·{" "}
+                          {t.payment_channel.replace(/_/g, " ")}
+                        </div>
+                        <div className="text-muted-foreground">
+                          {t.product_category.replace(/_/g, " ")}
+                          {t.counterparty_name ? ` · ${t.counterparty_name}` : ""}
+                          {t.counterparty_country ? ` (${t.counterparty_country})` : ""}
+                        </div>
+                        {t.narrative && (
+                          <div className="mt-1 text-muted-foreground">{t.narrative}</div>
+                        )}
+                        <div className="mt-0.5 text-[10px] text-muted-foreground">
+                          {new Date(t.booked_at).toLocaleString()}
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+            </aside>
+          </div>
 
-      <AgentChatPanel caseNumber={state.case.case_number} caseId={state.case.id} />
-
-      <NarrativeEditor state={state} />
-
-      <AuditTrail caseId={state.case.id} />
+          <NarrativeEditor state={state} />
+          <AuditTrail caseId={state.case.id} />
+        </>
+      )}
     </div>
+  );
+}
+
+function WorkflowModeBanner({ mode }: { mode: CaseWorkflowMode }) {
+  if (mode === "assistant") {
+    return (
+      <p className="rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Assistant workflow</span> — run stages in
+        chat, review <span className="font-medium">Interactive summary</span> cards, and approve
+        from structured actions. Use parties & gates on the right for verification.
+      </p>
+    );
+  }
+  return (
+    <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+      <span className="font-medium text-foreground">Standard workflow</span> — use the run panel to
+      trigger each stage, inspect full JSON output and reasoning, then approve or reject. Switch to
+      Assistant anytime for chat-driven review.
+    </p>
   );
 }

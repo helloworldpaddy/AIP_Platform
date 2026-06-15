@@ -83,6 +83,11 @@ TOOLS YOU SHOULD CALL:
 DO NOT call graph or external-search tools at this stage; that is the
 next agent's job.
 
+CRITICAL OUTPUT ORDER:
+    1. Finish all tool calls (policy search, record_evidence).
+    2. Emit exactly one ```json fenced block matching the schema below.
+    3. Only after the JSON block, optionally call send_a2ui_json_to_client.
+
 OUTPUT JSON SCHEMA:
 {
   "scenario_type": "string",                 // e.g. "STRUCTURING"
@@ -128,6 +133,11 @@ YOU MUST:
     e) AT THE END, you MUST declare the gate "PARTIES_VERIFIED" — the
        orchestrator will block Due Diligence until an analyst marks each
        returned party as verified.
+
+CRITICAL OUTPUT ORDER:
+    1. Finish all graph traversals and record_party / record_evidence calls.
+    2. Emit exactly one ```json fenced block matching the schema below.
+    3. Only after the JSON block, optionally call send_a2ui_json_to_client.
 
 OUTPUT JSON SCHEMA:
 {

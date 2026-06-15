@@ -260,6 +260,42 @@ class AgentRunsRepository:
         )
         return _to_agent_run(row) if row else None
 
+    async def resolve_id(self, run_id_or_prefix: str) -> UUID:
+        """Parse a UUID or resolve a unique prefix (LLMs often truncate run ids)."""
+        token = run_id_or_prefix.strip()
+        try:
+            return UUID(token)
+        except ValueError:
+            pass
+        compact = token.lower().replace("-", "")
+        if len(compact) < 8:
+            raise ValueError(f"run_id {run_id_or_prefix!r} is not a valid UUID or prefix")
+        rows = await self._conn.fetch(
+            """
+            SELECT id FROM agent_runs
+             WHERE REPLACE(id::text, '-', '') LIKE $1
+            """,
+            compact + "%",
+        )
+        if len(rows) == 1:
+            return rows[0]["id"]
+        if len(rows) > 1:
+            raise ValueError(
+                f"run_id prefix {run_id_or_prefix!r} is ambiguous ({len(rows)} matches)"
+            )
+        raise ValueError(f"run_id {run_id_or_prefix!r} not found")
+
+    async def list_awaiting_review(self, case_id: UUID) -> list[AgentRun]:
+        rows = await self._conn.fetch(
+            """
+            SELECT * FROM agent_runs
+             WHERE case_id = $1 AND status = 'AWAITING_REVIEW'
+             ORDER BY completed_at DESC NULLS LAST, created_at DESC
+            """,
+            case_id,
+        )
+        return [_to_agent_run(r) for r in rows]
+
     async def latest_for(self, case_id: UUID, agent: AgentName) -> AgentRun | None:
         row = await self._conn.fetchrow(
             """

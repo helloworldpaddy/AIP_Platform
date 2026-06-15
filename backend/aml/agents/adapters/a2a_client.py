@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
@@ -41,6 +42,7 @@ class A2aRemoteResponse:
     task_id: str | None = None
     context_id: str | None = None
     task_state: TaskState | None = None
+    a2ui_messages: list[dict[str, Any]] = field(default_factory=list)
 
 
 class A2aRemoteClient:
@@ -112,6 +114,7 @@ class A2aRemoteClient:
         task_id: str | None = None
         context_id: str | None = None
         task_state: TaskState | None = None
+        a2ui_messages: list[dict[str, Any]] = []
 
         async for event in client.send_message(
             request=message,
@@ -136,16 +139,18 @@ class A2aRemoteClient:
                 task_state=task_state,
                 final_text=final_text,
             )
+            a2ui_messages = _merge_a2ui_messages(a2ui_messages, _extract_a2ui_from_task(task))
 
         if task_id and (
             not _is_terminal_task_state(task_state) or not final_text.strip()
         ):
-            task_id, context_id, task_state, final_text = await self._poll_task(
+            task_id, context_id, task_state, final_text, a2ui_messages = await self._poll_task(
                 client,
                 task_id=task_id,
                 context_id=context_id,
                 task_state=task_state,
                 final_text=final_text,
+                a2ui_messages=a2ui_messages,
             )
 
         if task_state == TaskState.failed:
@@ -162,6 +167,7 @@ class A2aRemoteClient:
             task_id=task_id,
             context_id=context_id,
             task_state=task_state,
+            a2ui_messages=a2ui_messages,
         )
 
     async def _poll_task(
@@ -172,7 +178,8 @@ class A2aRemoteClient:
         context_id: str | None,
         task_state: TaskState | None,
         final_text: str,
-    ) -> tuple[str, str | None, TaskState | None, str]:
+        a2ui_messages: list[dict[str, Any]],
+    ) -> tuple[str, str | None, TaskState | None, str, list[dict[str, Any]]]:
         """Poll ``tasks/get`` until the task is terminal or the timeout elapses."""
         deadline = time.monotonic() + self._timeout_seconds
         while time.monotonic() < deadline:
@@ -188,8 +195,12 @@ class A2aRemoteClient:
                 task_state=task_state,
                 final_text=final_text,
             )
+            a2ui_messages = _merge_a2ui_messages(
+                a2ui_messages,
+                _extract_a2ui_from_task(task),
+            )
 
-        return task_id, context_id, task_state, final_text
+        return task_id, context_id, task_state, final_text, a2ui_messages
 
 
 def _is_terminal_task_state(state: TaskState | None) -> bool:
@@ -220,11 +231,19 @@ def _merge_task_snapshot(
 
 def _extract_agent_text(task: Task) -> str:
     history = list(task.history or [])
-    for message in reversed(history):
+    agent_texts: list[str] = []
+    for message in history:
         if message.role == Role.agent:
             text = get_message_text(message)
             if text.strip():
-                return text
+                agent_texts.append(text.strip())
+
+    for text in reversed(agent_texts):
+        if "```json" in text or text.lstrip().startswith("{") or text.lstrip().startswith("["):
+            return text
+    if agent_texts:
+        return max(agent_texts, key=len)
+
     if task.artifacts:
         chunks: list[str] = []
         for artifact in task.artifacts:
@@ -235,3 +254,72 @@ def _extract_agent_text(task: Task) -> str:
         if chunks:
             return "\n".join(chunks)
     return ""
+
+
+_A2UI_MIME_TYPES = frozenset(
+    {"application/json+a2ui", "application/a2ui+json"}
+)
+
+
+def _merge_a2ui_messages(
+    existing: list[dict[str, Any]],
+    new: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not new:
+        return existing
+    seen = {json.dumps(m, sort_keys=True, default=str) for m in existing}
+    merged = list(existing)
+    for msg in new:
+        key = json.dumps(msg, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(msg)
+    return merged
+
+
+def _extract_a2ui_from_task(task: Task) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    for message in list(task.history or []):
+        messages.extend(_extract_a2ui_from_message(message))
+    for artifact in task.artifacts or []:
+        for part in artifact.parts or []:
+            messages.extend(_extract_a2ui_from_part(part))
+    return messages
+
+
+def _extract_a2ui_from_message(message: Message) -> list[dict[str, Any]]:
+    parts = message.parts or []
+    out: list[dict[str, Any]] = []
+    for part in parts:
+        out.extend(_extract_a2ui_from_part(part))
+    return out
+
+
+def _extract_a2ui_from_part(part: Part) -> list[dict[str, Any]]:
+    root = getattr(part, "root", None)
+    if root is None:
+        return []
+    kind = getattr(root, "kind", None)
+    if kind != "data":
+        return []
+    data = getattr(root, "data", None)
+    if not isinstance(data, dict):
+        return []
+    metadata = getattr(root, "metadata", None) or {}
+    mime = (
+        metadata.get("mimeType")
+        or metadata.get("mime_type")
+        or metadata.get("mediaType")
+        or metadata.get("media_type")
+    )
+    if mime not in _A2UI_MIME_TYPES:
+        return []
+    if isinstance(data, list):
+        return [m for m in data if isinstance(m, dict)]
+    if isinstance(data, dict):
+        if isinstance(data.get("messages"), list):
+            return [m for m in data["messages"] if isinstance(m, dict)]
+        if any(k in data for k in ("createSurface", "updateComponents", "deleteSurface")):
+            return [data]
+    return []

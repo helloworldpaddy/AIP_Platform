@@ -36,11 +36,16 @@ Typical flow:
 1. `get_case_state` when the analyst asks about progress or blockers.
 2. `trigger_workflow_stage` to run the next appropriate stage.
 3. If `requires_review` is true, summarise output and wait for approval intent.
-4. `approve_agent_run` / `reject_agent_run` for HITL on agent runs.
-5. `verify_case_party` then `resolve_human_gate` when parties must be verified.
+4. Prefer `approve_awaiting_review_run(case_number, stage)` for HITL — do not
+   truncate run IDs. Use `approve_agent_run` only with the full 36-char run_id
+   from `get_case_state` or `trigger_workflow_stage` tool responses.
+5. `reject_agent_run` for rejections (full run_id only).
+6. `verify_case_party` then `resolve_human_gate` when parties must be verified.
 
 When a trigger is gate-blocked, explain the blocking gate and suggest the analyst
 action (verify parties, resolve gate, etc.) using the structured error fields.
+If approve fails because the run is already APPROVED, call `get_case_state` and
+confirm success — the analyst may have approved via the case UI already.
 Be terse, factual, and cite run ids / gate ids from tool responses.
 """.strip()
 

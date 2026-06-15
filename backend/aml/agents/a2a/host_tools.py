@@ -169,8 +169,42 @@ async def approve_agent_run(run_id: str) -> dict[str, Any]:
         return analyst
     await ensure_runtime_ready()
     orch = _get_orchestrator()
+    db = get_aml_db_client()
     try:
-        run = await orch.approve_run(run_id=UUID(run_id), analyst_id=analyst)
+        async with db.connection() as repos:
+            resolved_id = await repos.agent_runs.resolve_id(run_id)
+            existing = await repos.agent_runs.get(resolved_id)
+        if existing is None:
+            return {"ok": False, "error": f"agent_run {run_id} not found"}
+        if existing.status in (
+            AgentRunStatus.APPROVED,
+            AgentRunStatus.COMPLETED,
+        ):
+            return {
+                "ok": True,
+                "already_approved": True,
+                "run_id": str(existing.id),
+                "agent": existing.agent.value,
+                "status": existing.status.value,
+                "message": (
+                    "Run is already approved or completed (e.g. via the case UI). "
+                    "No further approval needed."
+                ),
+            }
+        if existing.status not in (
+            AgentRunStatus.AWAITING_REVIEW,
+            AgentRunStatus.MODIFIED,
+        ):
+            return {
+                "ok": False,
+                "error": (
+                    f"run is {existing.status.value}, not awaiting review "
+                    f"(cannot approve)"
+                ),
+                "run_id": str(existing.id),
+                "status": existing.status.value,
+            }
+        run = await orch.approve_run(run_id=resolved_id, analyst_id=analyst)
     except Exception as err:  # noqa: BLE001 — surface to LLM as structured error
         return {"ok": False, "error": f"{err.__class__.__name__}: {err}"}
     return {
@@ -181,6 +215,78 @@ async def approve_agent_run(run_id: str) -> dict[str, Any]:
     }
 
 
+async def approve_awaiting_review_run(
+    case_number: str,
+    stage: str = "",
+) -> dict[str, Any]:
+    """Approve the run awaiting review for a case (optional stage filter)."""
+    analyst = require_analyst_or_error()
+    if isinstance(analyst, dict):
+        return analyst
+    await ensure_runtime_ready()
+    try:
+        case = await load_case_by_number(case_number.strip().upper())
+    except LookupError as err:
+        return {"ok": False, "error": str(err)}
+    db = get_aml_db_client()
+    try:
+        async with db.connection() as repos:
+            pending = await repos.agent_runs.list_awaiting_review(case.id)
+        if stage.strip():
+            try:
+                agent_name = AgentName(stage.strip().upper())
+            except ValueError:
+                return {"ok": False, "error": f"unknown stage: {stage!r}"}
+            pending = [r for r in pending if r.agent == agent_name]
+        if not pending:
+            async with db.connection() as repos:
+                all_runs = await repos.agent_runs.list_for_case(case.id)
+            if stage.strip():
+                scoped = [r for r in all_runs if r.agent == agent_name]
+                latest = max(scoped, key=lambda r: r.attempt) if scoped else None
+            else:
+                reviewable = [
+                    r
+                    for r in all_runs
+                    if r.status in (
+                        AgentRunStatus.APPROVED,
+                        AgentRunStatus.COMPLETED,
+                    )
+                ]
+                latest = max(reviewable, key=lambda r: r.completed_at or r.created_at)
+                if not reviewable:
+                    latest = None
+            if latest and latest.status in (
+                AgentRunStatus.APPROVED,
+                AgentRunStatus.COMPLETED,
+            ):
+                return {
+                    "ok": True,
+                    "already_approved": True,
+                    "run_id": str(latest.id),
+                    "agent": latest.agent.value,
+                    "status": latest.status.value,
+                    "message": (
+                        "No run awaiting review — latest run is already approved "
+                        "or completed (often approved in the case UI)."
+                    ),
+                }
+            return {
+                "ok": False,
+                "error": "no runs awaiting review for this case",
+                "hint": "Call get_case_state to see current stage status.",
+            }
+        if len(pending) > 1:
+            return {
+                "ok": False,
+                "error": "multiple runs awaiting review — specify stage or full run_id",
+                "run_ids": [str(r.id) for r in pending],
+            }
+        return await approve_agent_run(str(pending[0].id))
+    except Exception as err:  # noqa: BLE001
+        return {"ok": False, "error": f"{err.__class__.__name__}: {err}"}
+
+
 async def reject_agent_run(run_id: str, reason: str) -> dict[str, Any]:
     """Reject an agent run awaiting human review."""
     analyst = require_analyst_or_error()
@@ -188,9 +294,12 @@ async def reject_agent_run(run_id: str, reason: str) -> dict[str, Any]:
         return analyst
     await ensure_runtime_ready()
     orch = _get_orchestrator()
+    db = get_aml_db_client()
     try:
+        async with db.connection() as repos:
+            resolved_id = await repos.agent_runs.resolve_id(run_id)
         run = await orch.reject_run(
-            run_id=UUID(run_id),
+            run_id=resolved_id,
             analyst_id=analyst,
             reason=reason.strip() or "rejected via aml host agent",
         )
@@ -276,6 +385,7 @@ async def verify_case_party(party_id: str) -> dict[str, Any]:
 HOST_AGENT_TOOLS: tuple[FunctionTool, ...] = (
     FunctionTool(func=get_case_state),
     FunctionTool(func=trigger_workflow_stage),
+    FunctionTool(func=approve_awaiting_review_run),
     FunctionTool(func=approve_agent_run),
     FunctionTool(func=reject_agent_run),
     FunctionTool(func=resolve_human_gate),

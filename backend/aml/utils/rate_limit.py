@@ -32,6 +32,7 @@ def _classify(err: BaseException) -> bool:
     if cls_name in {
         "ResourceExhausted",
         "ServiceUnavailable",
+        "ServerError",
         "DeadlineExceeded",
         "TooManyRequests",
         "RateLimitError",
@@ -54,7 +55,15 @@ def _classify(err: BaseException) -> bool:
 
 def is_retryable_error(err: BaseException) -> bool:
     """True if `err` represents a transient failure worth retrying."""
-    return _classify(err)
+    if _classify(err):
+        return True
+    msg = str(err).lower()
+    # A2A wraps Gemini failures as adapter/remote errors with the provider text.
+    if "503" in msg and "unavailable" in msg:
+        return True
+    if "429" in msg or "resource exhausted" in msg:
+        return True
+    return False
 
 
 class RetryExhausted(RuntimeError):

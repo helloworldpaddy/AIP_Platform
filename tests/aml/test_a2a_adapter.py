@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
 
-from backend.aml.agents.adapters.a2a import A2aAdapter, A2aAdapterError
+from backend.aml.agents.adapters.a2a import A2aAdapter, A2aAdapterError, _collect_ids_written_during_run
 from backend.aml.agents.adapters.a2a_client import A2aRemoteClient, A2aRemoteResponse
 from a2a.types import Message, Part, Role, Task, TaskStatus, TaskState, TextPart
 from backend.aml.agents.a2a.metadata import (
@@ -16,8 +17,67 @@ from backend.aml.agents.a2a.metadata import (
     parse_tool_gateway_from_metadata,
 )
 from backend.aml.agents.ports import ToolGatewaySpec
-from backend.aml.models.enums import AgentName
+from backend.aml.models.enums import AgentName, EvidenceType
+from backend.aml.models.state import CaseParty, Evidence
 from tests.aml.stubs import StubInitialAssessmentAgent
+
+
+@pytest.mark.asyncio
+async def test_collect_ids_written_during_run_links_parties_via_evidence():
+    """case_parties has no agent_run_id; harvest via source_evidence_ids."""
+    case_id = uuid4()
+    run_id = uuid4()
+    ev_id = uuid4()
+    party_linked = uuid4()
+    party_old = uuid4()
+    now = datetime.now(timezone.utc)
+
+    ctx = AsyncMock()
+    ctx.state.case.id = case_id
+    ctx.run.id = run_id
+    ctx.run.started_at = now
+    ctx.repos.evidence.list_for_case = AsyncMock(
+        return_value=[
+            Evidence(
+                id=ev_id,
+                case_id=case_id,
+                agent_run_id=run_id,
+                evidence_type=EvidenceType.INTERNAL_NOTE,
+                source_system="test",
+                title="t",
+                content="c",
+                content_hash="h",
+                retrieved_at=now,
+                created_by="test",
+            )
+        ]
+    )
+    ctx.repos.parties.list_for_case = AsyncMock(
+        return_value=[
+            CaseParty(
+                id=party_linked,
+                case_id=case_id,
+                party_external_id="linked",
+                party_name="Linked Party",
+                hop_distance=1,
+                source_evidence_ids=[ev_id],
+                created_at=now,
+            ),
+            CaseParty(
+                id=party_old,
+                case_id=case_id,
+                party_external_id="old",
+                party_name="Old Party",
+                hop_distance=2,
+                source_evidence_ids=[],
+                created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+
+    ev_ids, party_ids = await _collect_ids_written_during_run(ctx)
+    assert ev_ids == [ev_id]
+    assert party_ids == [party_linked]
 
 
 def test_build_a2a_request_metadata():

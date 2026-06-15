@@ -21,10 +21,12 @@ behaviour of the agent + analyst is fully reconstructible.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any
 from uuid import UUID
 
+from ..agents.a2a.a2ui import attach_a2ui_to_output_payload
 from ..agents.base import AgentContext, AgentResult, BaseAgent, GateSpec
 from ..agents.adapters.factory import build_execution_ports
 from ..agents.ports import AgentExecutionPort, ToolGatewaySpec
@@ -62,6 +64,26 @@ from .transitions import (
 log = logging.getLogger(__name__)
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return default
+
+
 class GateBlocked(RuntimeError):
     """Raised when an agent trigger is refused because of an open human gate."""
 
@@ -82,7 +104,8 @@ class Orchestrator:
         execution_ports: dict[AgentName, AgentExecutionPort] | None = None,
         transport_config: AgentTransportConfig | None = None,
         tool_gateway: ToolGatewayService | None = None,
-        max_retry_attempts: int = 4,
+        max_retry_attempts: int | None = None,
+        retry_max_delay_seconds: float | None = None,
     ) -> None:
         self._db = db
         self._agents = agents
@@ -91,7 +114,12 @@ class Orchestrator:
             agents, self._transport_config
         )
         self._tool_gateway = tool_gateway
-        self._max_attempts = max_retry_attempts
+        self._max_attempts = max_retry_attempts or _env_int(
+            "AML_ORCHESTRATOR_MAX_RETRY_ATTEMPTS", 6
+        )
+        self._retry_max_delay_seconds = retry_max_delay_seconds or _env_float(
+            "AML_ORCHESTRATOR_RETRY_MAX_DELAY_SECONDS", 45.0
+        )
 
     # =========================================================================
     # Agent triggers
@@ -235,12 +263,24 @@ class Orchestrator:
         token_audit = (
             result.tokens.model_dump(mode="json") if result.tokens else None
         )
+        completed_status = (
+            AgentRunStatus.AWAITING_REVIEW
+            if result.requires_review
+            else AgentRunStatus.COMPLETED
+        )
+        output_payload = attach_a2ui_to_output_payload(
+            dict(result.output_payload),
+            agent_name=agent_name,
+            run_id=run.id,
+            status=completed_status,
+            reasoning=result.reasoning,
+        )
 
         try:
             async with self._db.transaction() as repos:
                 updated = await repos.agent_runs.mark_completed(
                     run_id=run.id,
-                    output_payload=result.output_payload,
+                    output_payload=output_payload,
                     reasoning=result.reasoning,
                     reasoning_summary=result.reasoning_summary,
                     tokens=result.tokens,
@@ -388,8 +428,8 @@ class Orchestrator:
             return await call_with_retry(
                 _attempt,
                 max_attempts=self._max_attempts,
-                base_delay_seconds=1.0,
-                max_delay_seconds=20.0,
+                base_delay_seconds=2.0,
+                max_delay_seconds=self._retry_max_delay_seconds,
             )
         except RetryExhausted as exhausted:
             return exhausted.last_error

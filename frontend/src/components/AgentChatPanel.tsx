@@ -1,19 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Loader2, Send, Sparkles } from "lucide-react";
+import { casesApi } from "@/lib/api";
 import {
   A2aClientError,
   fetchAgentCard,
   sendMessageStream,
   type StreamEvent,
 } from "@/lib/a2a";
+import { dispatchA2uiAction } from "@/lib/a2ui-actions";
 import {
-  actionToUserMessage,
+  getA2uiLayoutPreference,
+  subscribeA2uiLayoutPreference,
+  type A2uiLayoutId,
+} from "@/lib/a2ui-layout-preference";
+import { runsWithSurfaces, surfacesFromRuns } from "@/lib/a2ui-from-run";
+import {
   applyA2uiMessages,
   type A2uiSurfaceState,
   type ActionPayload,
 } from "@/lib/a2ui-render";
 import { A2uiSurface } from "@/components/A2uiSurface";
+import { A2uiLayoutSelector } from "@/components/A2uiLayoutSelector";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -38,12 +46,19 @@ export function AgentChatPanel({ caseNumber, caseId }: Props) {
   const qc = useQueryClient();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [surfaces, setSurfaces] = useState<Map<string, A2uiSurfaceState>>(new Map());
+  const [streamSurfaces, setStreamSurfaces] = useState<Map<string, A2uiSurfaceState>>(
+    new Map(),
+  );
   const [contextId, setContextId] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [seeded, setSeeded] = useState(false);
+  const [a2uiLayout, setA2uiLayout] = useState<A2uiLayoutId>(() => getA2uiLayoutPreference());
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return subscribeA2uiLayoutPreference(() => setA2uiLayout(getA2uiLayoutPreference()));
+  }, []);
 
   const cardQuery = useQuery({
     queryKey: ["a2a-agent-card"],
@@ -52,6 +67,25 @@ export function AgentChatPanel({ caseNumber, caseId }: Props) {
     staleTime: 60_000,
     enabled: ENABLED,
   });
+
+  const caseQuery = useQuery({
+    queryKey: ["case", caseId],
+    queryFn: () => casesApi.get(caseId),
+    enabled: ENABLED && !!caseId,
+  });
+
+  const runSurfaces = useMemo(() => {
+    const runs = runsWithSurfaces(caseQuery.data?.agent_runs ?? []);
+    return surfacesFromRuns(runs, a2uiLayout);
+  }, [caseQuery.data?.agent_runs, a2uiLayout]);
+
+  const displaySurfaces = useMemo(() => {
+    const merged = new Map(runSurfaces);
+    for (const [id, surface] of streamSurfaces) {
+      merged.set(id, surface);
+    }
+    return merged;
+  }, [runSurfaces, streamSurfaces]);
 
   const appendMessage = useCallback((role: ChatMessage["role"], text: string) => {
     const trimmed = text.trim();
@@ -86,7 +120,7 @@ export function AgentChatPanel({ caseNumber, caseId }: Props) {
             },
             onA2ui: (msgs) => {
               flushAgent();
-              setSurfaces((prev) => applyA2uiMessages(prev, msgs));
+              setStreamSurfaces((prev) => applyA2uiMessages(prev, msgs));
             },
             onStatus: (state, final) => {
               setStatus(state);
@@ -102,7 +136,8 @@ export function AgentChatPanel({ caseNumber, caseId }: Props) {
             },
           });
         }
-        qc.invalidateQueries({ queryKey: ["case", caseId] });
+        await qc.invalidateQueries({ queryKey: ["case", caseId] });
+        await qc.refetchQueries({ queryKey: ["case", caseId] });
       } catch (err) {
         appendMessage(
           "system",
@@ -118,7 +153,7 @@ export function AgentChatPanel({ caseNumber, caseId }: Props) {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, surfaces]);
+  }, [messages, displaySurfaces]);
 
   useEffect(() => {
     if (!ENABLED || seeded || !cardQuery.data) return;
@@ -134,10 +169,22 @@ export function AgentChatPanel({ caseNumber, caseId }: Props) {
   };
 
   const onA2uiAction = (action: ActionPayload) => {
-    void runTurn(actionToUserMessage(action, caseNumber));
+    void dispatchA2uiAction(action, {
+      caseId,
+      caseNumber,
+      invalidateCase: async () => {
+        await qc.invalidateQueries({ queryKey: ["case", caseId] });
+        await qc.refetchQueries({ queryKey: ["case", caseId] });
+      },
+      onChatFallback: (message) => void runTurn(message),
+      onSuccess: (message) => appendMessage("system", message),
+      onError: (message) => appendMessage("system", `Action failed: ${message}`),
+    });
   };
 
   if (!ENABLED) return null;
+
+  const hasSurfaces = displaySurfaces.size > 0;
 
   return (
     <Card className="col-span-12">
@@ -151,6 +198,8 @@ export function AgentChatPanel({ caseNumber, caseId }: Props) {
         </span>
       </CardHeader>
       <CardContent className="space-y-3">
+        <A2uiLayoutSelector value={a2uiLayout} onChange={setA2uiLayout} />
+
         {cardQuery.isError && (
           <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning-foreground">
             {(cardQuery.error as Error).message} — start{" "}
@@ -161,7 +210,7 @@ export function AgentChatPanel({ caseNumber, caseId }: Props) {
 
         <div
           ref={scrollRef}
-          className="max-h-72 space-y-2 overflow-y-auto rounded-md border border-border bg-muted/20 p-3"
+          className="max-h-[min(28rem,60vh)] space-y-3 overflow-y-auto rounded-md border border-border bg-muted/20 p-3"
         >
           {messages.length === 0 && cardQuery.data && !streaming && (
             <p className="text-xs text-muted-foreground">
@@ -186,7 +235,7 @@ export function AgentChatPanel({ caseNumber, caseId }: Props) {
               {m.role === "agent" && <Bot className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />}
               <div
                 className={cn(
-                  "max-w-[90%] rounded-md px-2.5 py-1.5 whitespace-pre-wrap",
+                  "max-w-[95%] rounded-md px-2.5 py-1.5 whitespace-pre-wrap",
                   m.role === "user" && "bg-primary text-primary-foreground",
                   m.role === "agent" && "bg-card border border-border",
                   m.role === "system" && "bg-destructive/10 border border-destructive/30 text-xs",
@@ -196,17 +245,36 @@ export function AgentChatPanel({ caseNumber, caseId }: Props) {
               </div>
             </div>
           ))}
+
+          {/* A2UI surfaces inline in the conversation (below latest agent text) */}
+          {hasSurfaces && (
+            <div className="space-y-3 border-t border-border/60 pt-3">
+              <p className="text-xs font-medium text-muted-foreground">Interactive summary</p>
+              {[...displaySurfaces.values()].map((surface) => (
+                <A2uiSurface
+                  key={surface.surfaceId}
+                  surface={surface}
+                  onAction={onA2uiAction}
+                  className="bg-card/50"
+                />
+              ))}
+            </div>
+          )}
+
           {streaming && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               {status ?? "Thinking…"}
             </div>
           )}
-        </div>
 
-        {[...surfaces.values()].map((surface) => (
-          <A2uiSurface key={surface.surfaceId} surface={surface} onAction={onA2uiAction} />
-        ))}
+          {!hasSurfaces && !streaming && caseQuery.data && messages.length > 0 && (
+            <p className="text-xs text-muted-foreground border-t border-border/60 pt-2">
+              No A2UI panel yet — run a stage to generate an interactive summary with approve
+              actions.
+            </p>
+          )}
+        </div>
 
         <form onSubmit={onSubmit} className="flex gap-2">
           <Textarea

@@ -45,6 +45,7 @@ def test_build_aml_host_agent_exposes_orchestrator_tools():
     assert tool_names == {
         "get_case_state",
         "trigger_workflow_stage",
+        "approve_awaiting_review_run",
         "approve_agent_run",
         "reject_agent_run",
         "resolve_human_gate",
@@ -220,7 +221,10 @@ async def test_approve_agent_run(orchestrator, aml_db, case_number: str, monkeyp
     assert result["ok"] is True
     assert result["status"] == AgentRunStatus.APPROVED.value
 
-
+    # Idempotent — UI may have approved already; chat approve should not error.
+    again = await approve_agent_run(str(run.id))
+    assert again["ok"] is True
+    assert again.get("already_approved") is True
 def test_create_aml_host_app_smoke():
     app = create_aml_host_app(public_host="localhost", port=8199)
     assert app is not None

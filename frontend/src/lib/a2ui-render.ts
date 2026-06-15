@@ -79,7 +79,89 @@ export function textValue(raw: unknown): string {
 export function childIds(raw: unknown): string[] {
   if (typeof raw === "string") return [raw];
   if (Array.isArray(raw)) return raw.map(String);
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.explicitList)) return obj.explicitList.map(String);
+  }
   return [];
+}
+
+/** List/Tabs children: explicit ids or template binding (path-only). */
+export function listChildren(raw: unknown): {
+  ids: string[];
+  template?: { componentId: string; path: string };
+} {
+  if (Array.isArray(raw)) return { ids: raw.map(String) };
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.explicitList)) {
+      return { ids: obj.explicitList.map(String) };
+    }
+    const componentId = obj.componentId ?? obj.component_id;
+    const path = obj.path ?? obj.dataBinding;
+    if (typeof componentId === "string" && typeof path === "string") {
+      return { ids: [], template: { componentId, path } };
+    }
+  }
+  return { ids: childIds(raw) };
+}
+
+export type TabItem = { title: string; child: string };
+
+export function tabItems(raw: unknown): TabItem[] {
+  if (!Array.isArray(raw)) return [];
+  const items: TabItem[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const child = row.child;
+    if (typeof child !== "string") continue;
+    items.push({
+      title: textValue(row.title) || "Tab",
+      child,
+    });
+  }
+  return items;
+}
+
+export function flexJustify(raw: unknown): string {
+  const map: Record<string, string> = {
+    start: "justify-start",
+    center: "justify-center",
+    end: "justify-end",
+    spaceBetween: "justify-between",
+    spaceAround: "justify-around",
+    spaceEvenly: "justify-evenly",
+    stretch: "justify-stretch",
+  };
+  if (typeof raw !== "string") return "justify-start";
+  return map[raw] ?? "justify-start";
+}
+
+export function flexAlign(raw: unknown): string {
+  const map: Record<string, string> = {
+    start: "items-start",
+    center: "items-center",
+    end: "items-end",
+    stretch: "items-stretch",
+    baseline: "items-baseline",
+  };
+  if (typeof raw !== "string") return "items-start";
+  return map[raw] ?? "items-start";
+}
+
+export function textVariantClass(raw: unknown): string {
+  const map: Record<string, string> = {
+    h1: "text-2xl font-semibold tracking-tight",
+    h2: "text-xl font-semibold",
+    h3: "text-lg font-medium",
+    h4: "text-base font-medium",
+    h5: "text-sm font-medium",
+    caption: "text-xs text-muted-foreground",
+    body: "text-sm leading-relaxed",
+  };
+  if (typeof raw !== "string") return map.body;
+  return map[raw] ?? map.body;
 }
 
 export type ActionPayload = {
@@ -91,6 +173,23 @@ export function actionFromComponent(comp: A2uiComponent): ActionPayload | null {
   const action = comp.action;
   if (!action || typeof action !== "object") return null;
   const a = action as Record<string, unknown>;
+
+  // v0.9: { event: { name, context } }
+  const event = a.event;
+  if (event && typeof event === "object") {
+    const ev = event as Record<string, unknown>;
+    const eventName = ev.name ?? ev.actionId ?? ev.id;
+    if (typeof eventName === "string") {
+      return {
+        name: eventName,
+        context:
+          (ev.context as Record<string, unknown>) ??
+          (a.context as Record<string, unknown>) ??
+          undefined,
+      };
+    }
+  }
+
   const name = a.name ?? a.actionId ?? a.id;
   if (typeof name !== "string") return null;
   return {

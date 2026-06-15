@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from ...models.enums import AgentName
+from ...models.enums import AgentName, AgentRunStatus
 from ...models.state import TokenUsage
 from ...utils.circuit_breaker import CircuitOpenError
+from ..a2a.a2ui import attach_a2ui_to_output_payload
+from ..a2a.summary_parse import salvage_analyst_summary_from_text
 from ..a2a.metadata import build_a2a_request_metadata
 from ..adk_runner import extract_json_block
 from ..base import AgentContext, AgentResult, BaseAgent
@@ -105,16 +107,35 @@ class A2aAdapter:
         try:
             output = extract_json_block(remote.final_text)
         except ValueError as err:
+            salvaged = salvage_analyst_summary_from_text(remote.final_text)
             log.warning(
-                "adapter.a2a.parse_failed agent=%s err=%s",
+                "adapter.a2a.parse_failed agent=%s err=%s salvaged=%s",
                 agent_name.value,
                 err,
+                bool(salvaged),
             )
-            output = {
-                "error": "failed_to_parse_output",
-                "detail": str(err),
-                "raw_text": remote.final_text,
-            }
+            if salvaged:
+                output = salvaged
+            else:
+                output = {
+                    "error": "failed_to_parse_output",
+                    "detail": str(err),
+                    "raw_text": remote.final_text,
+                }
+
+        run_status = (
+            AgentRunStatus.AWAITING_REVIEW
+            if getattr(agent, "requires_review", True)
+            else AgentRunStatus.COMPLETED
+        )
+        output = attach_a2ui_to_output_payload(
+            output,
+            agent_name=agent_name,
+            run_id=ctx.run.id,
+            status=run_status,
+            captured_messages=remote.a2ui_messages or None,
+            reasoning=remote.final_text,
+        )
 
         evidence_ids, party_ids = await _collect_ids_written_during_run(ctx)
         summary = _reasoning_summary(remote.final_text)
@@ -140,7 +161,15 @@ async def _collect_ids_written_during_run(
     parties = await ctx.repos.parties.list_for_case(ctx.state.case.id)
     run_id = ctx.run.id
     ev_ids = [e.id for e in evidence if e.agent_run_id == run_id]
-    party_ids = [p.id for p in parties if p.agent_run_id == run_id]
+    ev_id_set = set(ev_ids)
+    # case_parties has no agent_run_id — link via source_evidence_ids from this run.
+    party_ids: list[UUID] = []
+    started_at = ctx.run.started_at
+    for party in parties:
+        if ev_id_set and any(ev in ev_id_set for ev in party.source_evidence_ids):
+            party_ids.append(party.id)
+        elif started_at is not None and party.created_at >= started_at:
+            party_ids.append(party.id)
     return ev_ids, party_ids
 
 

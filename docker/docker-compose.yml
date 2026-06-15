@@ -166,6 +166,10 @@ services:
       AML_TOOL_GATEWAY_SECRET: ${AML_TOOL_GATEWAY_SECRET:-aml-dev-tool-gateway-secret}
       AML_TOOL_GATEWAY_BASE_URL: ${AML_TOOL_GATEWAY_BASE_URL:-http://backend:8000}
       AML_TOOL_GATEWAY_TTL_SECONDS: ${AML_TOOL_GATEWAY_TTL_SECONDS:-3600}
+      # A2UI surfaces on agent runs (orchestrator attaches a2ui_messages to output_payload)
+      AML_A2UI_ENABLED: ${AML_A2UI_ENABLED:-false}
+      AML_A2UI_STAGES: ${AML_A2UI_STAGES:-INITIAL_ASSESSMENT}
+      AML_A2UI_VERSION: ${AML_A2UI_VERSION:-0.9}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     networks: [aml-net]
@@ -214,6 +218,8 @@ services:
       AML_A2A_PUBLIC_HOST: ia-agent
       AML_A2UI_ENABLED: ${AML_A2UI_ENABLED:-false}
       AML_A2UI_STAGES: ${AML_A2UI_STAGES:-INITIAL_ASSESSMENT}
+      AML_TOOL_GATEWAY_BASE_URL: ${AML_TOOL_GATEWAY_BASE_URL:-http://backend:8000}
+      AML_TOOL_GATEWAY_SECRET: ${AML_TOOL_GATEWAY_SECRET:-aml-dev-tool-gateway-secret}
       PORT: 8101
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}
@@ -234,6 +240,10 @@ services:
     environment:
       AML_A2A_STAGE: TRANSACTION_ENRICHMENT
       AML_A2A_PUBLIC_HOST: te-agent
+      AML_A2UI_ENABLED: ${AML_A2UI_ENABLED:-false}
+      AML_A2UI_STAGES: ${AML_A2UI_STAGES:-INITIAL_ASSESSMENT}
+      AML_TOOL_GATEWAY_BASE_URL: ${AML_TOOL_GATEWAY_BASE_URL:-http://backend:8000}
+      AML_TOOL_GATEWAY_SECRET: ${AML_TOOL_GATEWAY_SECRET:-aml-dev-tool-gateway-secret}
       PORT: 8102
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}
@@ -254,6 +264,10 @@ services:
     environment:
       AML_A2A_STAGE: DUE_DILIGENCE
       AML_A2A_PUBLIC_HOST: dd-agent
+      AML_A2UI_ENABLED: ${AML_A2UI_ENABLED:-false}
+      AML_A2UI_STAGES: ${AML_A2UI_STAGES:-INITIAL_ASSESSMENT}
+      AML_TOOL_GATEWAY_BASE_URL: ${AML_TOOL_GATEWAY_BASE_URL:-http://backend:8000}
+      AML_TOOL_GATEWAY_SECRET: ${AML_TOOL_GATEWAY_SECRET:-aml-dev-tool-gateway-secret}
       PORT: 8103
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}
@@ -272,6 +286,10 @@ services:
     environment:
       AML_A2A_STAGE: CASE_ANALYSIS
       AML_A2A_PUBLIC_HOST: ca-agent
+      AML_A2UI_ENABLED: ${AML_A2UI_ENABLED:-false}
+      AML_A2UI_STAGES: ${AML_A2UI_STAGES:-INITIAL_ASSESSMENT}
+      AML_TOOL_GATEWAY_BASE_URL: ${AML_TOOL_GATEWAY_BASE_URL:-http://backend:8000}
+      AML_TOOL_GATEWAY_SECRET: ${AML_TOOL_GATEWAY_SECRET:-aml-dev-tool-gateway-secret}
       PORT: 8104
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GENERATION_MODEL: ${GENERATION_MODEL:-gemini-2.5-flash}

@@ -14,6 +14,7 @@ from google.genai import types as genai_types
 from backend.aml.agents.a2a.a2ui import (
     SendA2uiJsonToClientTool,
     apply_a2ui_agent_card_extensions,
+    a2ui_instruction_suffix,
     catalog_for_stage,
     extension_on_card,
     load_a2ui_config,
@@ -79,6 +80,14 @@ def sample_a2ui_messages(monkeypatch):
             },
         },
     ]
+
+
+def test_a2ui_instruction_suffix_escapes_adk_expression_placeholder(monkeypatch):
+    monkeypatch.setenv("AML_A2UI_ENABLED", "true")
+    monkeypatch.setenv("AML_A2UI_STAGES", AgentName.INITIAL_ASSESSMENT.value)
+    suffix = a2ui_instruction_suffix(agent_name=AgentName.INITIAL_ASSESSMENT)
+    assert "{expression}" not in suffix
+    assert "(expression)" in suffix or "${expression}" in suffix
 
 
 def test_apply_a2ui_agent_card_extensions():

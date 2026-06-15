@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from a2a.types import AgentCard, AgentCapabilities
 from a2ui.adk.a2a.event_converter import A2uiEventConverter
@@ -34,7 +36,8 @@ from google.adk.tools import base_tool
 from google.adk.tools import tool_context
 from google.genai import types as genai_types
 
-from ...models.enums import AgentName
+from ...models.enums import AgentName, AgentRunStatus
+from .summary_parse import analyst_lines_from_payload, enrich_failed_output_payload
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +112,23 @@ def catalog_for_stage(agent_name: AgentName) -> A2uiCatalog | None:
     return manager._supported_catalogs[0]
 
 
+# ADK inject_session_state treats `{identifier}` in instructions as session placeholders.
+_ADK_STATE_REF = re.compile(r"\{+[^{}]*\}+")
+
+
+def _escape_adk_session_state_refs(text: str) -> str:
+    """Neutralize catalog prose like ``${expression}`` that ADK mis-reads as state keys."""
+
+    def _repl(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        inner = raw.lstrip("{").rstrip("}").strip().strip("+")
+        if not inner.isidentifier():
+            return raw
+        return raw.replace("{", "(").replace("}", ")")
+
+    return _ADK_STATE_REF.sub(_repl, text)
+
+
 def a2ui_instruction_suffix(*, agent_name: AgentName) -> str:
     """Extra system instruction when A2UI is enabled for a stage."""
     catalog = catalog_for_stage(agent_name)
@@ -125,7 +145,7 @@ def a2ui_instruction_suffix(*, agent_name: AgentName) -> str:
         "replacement for structured JSON output.\n"
         "If A2UI validation fails, fix the payload or omit the tool call; never "
         "skip the ```json Output block.\n"
-        + catalog.render_as_llm_instructions()
+        + _escape_adk_session_state_refs(catalog.render_as_llm_instructions())
         + _stage_a2ui_examples(agent_name)
     )
 
@@ -338,3 +358,254 @@ def extension_on_card(agent_card: AgentCard, *, version: str = A2UI_EXTENSION_VE
         return False
     prefix = f"{A2UI_EXTENSION_BASE_URI}/v"
     return any(ext.uri and ext.uri.startswith(prefix) for ext in caps.extensions)
+
+
+def attach_a2ui_to_output_payload(
+    output_payload: dict[str, Any],
+    *,
+    agent_name: AgentName,
+    run_id: UUID,
+    status: AgentRunStatus,
+    captured_messages: list[dict[str, Any]] | None = None,
+    reasoning: str | None = None,
+    case_priority: str | None = None,
+) -> dict[str, Any]:
+    """Merge agent-emitted or synthesized A2UI into the orchestrator output payload."""
+    output_payload = enrich_failed_output_payload(
+        output_payload,
+        reasoning=reasoning,
+        case_priority=case_priority,
+        agent_name=agent_name.value,
+    )
+    existing = output_payload.get("a2ui_messages")
+    if isinstance(existing, list) and existing:
+        return output_payload
+    if captured_messages:
+        output_payload["a2ui_messages"] = captured_messages
+        return output_payload
+    built = build_run_surface_messages(
+        agent=agent_name,
+        run_id=run_id,
+        status=status,
+        output_payload=output_payload,
+    )
+    if built:
+        output_payload["a2ui_messages"] = built
+    return output_payload
+
+
+def _stored_a2ui_is_stale(output_payload: dict[str, Any]) -> bool:
+    """True when stored surfaces were built from a failed parse salvage."""
+    if output_payload.get("error") != "failed_to_parse_output":
+        return False
+    messages = output_payload.get("a2ui_messages")
+    if not isinstance(messages, list) or not messages:
+        return False
+    blob = str(messages).lower()
+    stale_markers = (
+        "risk band: not assessed",
+        "structured json was incomplete",
+        "risk band and hypothesis may be missing",
+        "failed_to_parse_output",
+    )
+    return any(marker in blob for marker in stale_markers)
+
+
+def hydrate_agent_run_payloads(
+    runs: list[Any],
+    *,
+    case_priority: str | None = None,
+) -> list[Any]:
+    """On case load: salvage partial IA output and attach missing A2UI surfaces."""
+    cfg = load_a2ui_config()
+    if not cfg.enabled:
+        return runs
+
+    for run in runs:
+        payload = run.output_payload
+        if not isinstance(payload, dict):
+            continue
+
+        enriched = enrich_failed_output_payload(
+            dict(payload),
+            reasoning=run.reasoning,
+            case_priority=case_priority,
+            agent_name=run.agent.value,
+        )
+
+        # Drop stale synthesized surfaces so client templates can rebuild.
+        if enriched.get("a2ui_messages") and _stored_a2ui_is_stale(enriched):
+            enriched = dict(enriched)
+            del enriched["a2ui_messages"]
+
+        if not enriched.get("a2ui_messages") and cfg.enabled_for(run.agent):
+            enriched = attach_a2ui_to_output_payload(
+                enriched,
+                agent_name=run.agent,
+                run_id=run.id,
+                status=run.status,
+                reasoning=run.reasoning,
+                case_priority=case_priority,
+            )
+
+        if enriched != payload:
+            run.output_payload = enriched
+
+    return runs
+
+
+def build_run_surface_messages(
+    *,
+    agent: AgentName,
+    run_id: UUID,
+    status: AgentRunStatus,
+    output_payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Deterministic A2UI surface when the stage host did not emit one on the wire."""
+    cfg = load_a2ui_config()
+    if not cfg.enabled_for(agent):
+        return []
+    catalog = catalog_for_stage(agent)
+    if catalog is None:
+        return []
+
+    surface_id = f"{agent.value.lower()}-{str(run_id)[:8]}"
+    catalog_id = catalog.catalog_id
+    lines = analyst_lines_from_payload(output_payload)
+
+    body_children: list[str] = ["title", "status"]
+    components: list[dict[str, Any]] = [
+        {"id": "root", "component": "Card", "child": "body"},
+        {"id": "body", "component": "Column", "children": body_children},
+        {
+            "id": "title",
+            "component": "Text",
+            "text": agent.value.replace("_", " "),
+            "variant": "h3",
+        },
+        {
+            "id": "status",
+            "component": "Text",
+            "text": f"Awaiting review · run {str(run_id)[:8]}…"
+            if status == AgentRunStatus.AWAITING_REVIEW
+            else f"{status.value} · run {str(run_id)[:8]}…",
+            "variant": "caption",
+        },
+    ]
+
+    question_ids: list[str] = []
+    for idx, (label, value) in enumerate(lines):
+        line_id = f"line-{idx}"
+        body_children.append(line_id)
+        label_lower = label.lower()
+        if label_lower == "risk band":
+            components.append(
+                {
+                    "id": line_id,
+                    "component": "Text",
+                    "text": f"Risk band: {value}",
+                    "variant": "h4",
+                }
+            )
+        elif label_lower == "leading hypothesis":
+            components.append(
+                {
+                    "id": f"{line_id}-label",
+                    "component": "Text",
+                    "text": "Leading hypothesis",
+                    "variant": "caption",
+                }
+            )
+            hypo_id = f"{line_id}-body"
+            body_children.append(hypo_id)
+            components.append(
+                {"id": hypo_id, "component": "Text", "text": value, "variant": "body"}
+            )
+        elif label_lower.startswith("open question"):
+            question_ids.append(line_id)
+            components.append(
+                {
+                    "id": line_id,
+                    "component": "Text",
+                    "text": f"{label}: {value}",
+                    "variant": "caption",
+                }
+            )
+        elif label_lower.startswith("red flag"):
+            question_ids.append(line_id)
+            components.append(
+                {
+                    "id": line_id,
+                    "component": "Text",
+                    "text": f"{label}: {value}",
+                    "variant": "body",
+                }
+            )
+        else:
+            components.append(
+                {
+                    "id": line_id,
+                    "component": "Text",
+                    "text": f"{label}: {value}",
+                    "variant": "body",
+                }
+            )
+
+    if output_payload.get("error") == "failed_to_parse_output" and not lines:
+        components.append(
+            {
+                "id": "parse-note",
+                "component": "Text",
+                "text": "Structured JSON output was incomplete; review the chat summary above.",
+                "variant": "caption",
+            }
+        )
+        body_children.append("parse-note")
+
+    action_children: list[str] = []
+    if status == AgentRunStatus.AWAITING_REVIEW:
+        components.extend(
+            [
+                {
+                    "id": "approve-btn",
+                    "component": "Button",
+                    "variant": "primary",
+                    "child": "approve-label",
+                    "action": {
+                        "event": {
+                            "name": "approve_run",
+                            "context": {"runId": str(run_id)},
+                        }
+                    },
+                },
+                {"id": "approve-label", "component": "Text", "text": "Approve run"},
+            ]
+        )
+        action_children.append("approve-btn")
+
+    if action_children:
+        body_children.append("actions")
+        components.append(
+            {
+                "id": "actions",
+                "component": "Row",
+                "children": action_children,
+                "justify": "start",
+            }
+        )
+
+    components[1]["children"] = body_children
+
+    return [
+        {
+            "version": "v0.9",
+            "createSurface": {"surfaceId": surface_id, "catalogId": catalog_id},
+        },
+        {
+            "version": "v0.9",
+            "updateComponents": {
+                "surfaceId": surface_id,
+                "components": components,
+            },
+        },
+    ]
